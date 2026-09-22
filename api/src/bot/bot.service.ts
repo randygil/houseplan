@@ -483,7 +483,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       const tag = a.kind === 'synced' ? 'sincronizado' : a.lastReconciledAt ? `estimado · conciliado hace ${Math.max(0, Math.round((now - a.lastReconciledAt.getTime()) / 864e5))} d` : 'estimado';
       return `<b>${esc(a.name)}</b>: ${money(Math.round(a.balance * 100) / 100, a.currency)}${usdPart}\n   <i>${tag}</i>`;
     });
-    const total = accs.reduce((s, a) => s + (a.balanceUsd ?? 0), 0);
+    const total = (await this.insights.overview()).netWorthUsd; // includes every Binance wallet when snapshotted
     return this.send(`🏦 <b>Saldos</b>\n${lines.join('\n')}\n\nTotal ≈ <b>${usd(total)}</b>`);
   }
 
@@ -527,12 +527,15 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
 
   /** What Binance data we actually have — proof the sync reads your P2P. */
   private async syncStatus() {
-    const [p2pCount, payCount, last, snap] = await Promise.all([
+    const [p2pCount, payCount, last, snap, all] = await Promise.all([
       this.db.rawEvent.count({ where: { source: 'p2p' } }),
       this.db.rawEvent.count({ where: { source: 'pay' } }),
       this.db.rawEvent.findMany({ where: { source: 'p2p' }, orderBy: { occurredAt: 'desc' }, take: 3 }),
       this.db.walletSnapshot.findFirst({ where: { wallet: 'funding' }, orderBy: { takenAt: 'desc' } }),
+      this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
     ]);
+    const wallets = Object.entries((all?.balances ?? {}) as Record<string, number>).sort((a, b) => b[1] - a[1]);
+    const total = wallets.reduce((n, [, v]) => n + Number(v), 0);
     const lines = last.map((e) => {
       const o = e.payload as any;
       return `• ${dayLabel(e.occurredAt, new Date())} ${hhmm(e.occurredAt)} ${o.tradeType === 'SELL' ? 'Vendí' : 'Compré'} ${money(Number(o.amount), o.asset)} → ${money(Number(o.totalPrice), o.fiat)} @ ${Number(o.unitPrice)} · ${esc(o.payMethodName ?? '¿banco?')} · ${esc(o.orderStatus)}`;
@@ -541,7 +544,8 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     return this.send([
       `✅ Binance: <b>${p2pCount}</b> órdenes P2P y <b>${payCount}</b> pagos guardados.`,
       ...(lines.length ? ['', 'Últimos P2P:', ...lines] : ['Aún no veo órdenes P2P (¿key sin permiso de lectura o sin /backfill?).']),
-      '', snap ? `Funding: ${money(usdt!, 'USDT')} · leído ${hhmm(snap.takenAt)}` : 'Funding: sin lectura todavía.',
+      '', snap ? `Funding (USDT): ${money(usdt!, 'USDT')} · leído ${hhmm(snap.takenAt)}` : 'Funding: sin lectura todavía.',
+      ...(wallets.length ? ['', `<b>Total Binance ≈ ${money(total, 'USDT')}</b>`, ...wallets.map(([w, v]) => `• ${esc(w)}: ${money(Number(v), 'USDT')}`)] : []),
     ].join('\n'));
   }
 

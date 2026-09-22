@@ -51,7 +51,7 @@ export class BinanceService {
 
   private requireKey() { if (!this.api.enabled) throw new Error('Binance no configurado (BINANCE_KEY/BINANCE_SECRET)'); }
 
-  async syncNow(): Promise<void> { this.requireKey(); await this.exclusive(() => this.syncAll()); }
+  async syncNow(): Promise<void> { this.requireKey(); await this.exclusive(async () => { await this.syncAll(); await this.snapshotSpot(); }); }
 
   async backfill(): Promise<{ p2p: number; pay: number }> {
     this.requireKey();
@@ -247,6 +247,8 @@ export class BinanceService {
     const balances: Record<string, number> = {};
     for (const b of await this.api.spotBalances()) balances[b.asset] = Number(b.free) + Number(b.locked);
     await this.db.walletSnapshot.create({ data: { wallet: 'spot', balances: toJson(balances) } });
+    // wallet 'all' = USDT value per Binance wallet (net worth incl. Earn/bots/other coins)
+    await this.db.walletSnapshot.create({ data: { wallet: 'all', balances: toJson(await this.api.walletBalances()) } });
   }
 
   private prompt(kind: string, refId: number, payload: object, dueAt = new Date()) {

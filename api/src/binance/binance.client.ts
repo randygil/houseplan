@@ -105,6 +105,12 @@ export class BinanceClient {
 
   fundingAssets() { return this.signed<WalletAsset[]>('POST', '/sapi/v1/asset/get-funding-asset'); }
 
+  /** Every wallet (Spot, Funding, Earn, Futures, Trading Bots…) valued in USDT. */
+  async walletBalances(): Promise<Record<string, number>> {
+    const r = await this.signed<{ activate: boolean; balance: string; walletName: string }[]>('GET', '/sapi/v1/asset/wallet/balance', { quoteAsset: 'USDT' });
+    return Object.fromEntries(r.filter((w) => Number(w.balance) > 0).map((w) => [w.walletName, Number(w.balance)]));
+  }
+
   async spotBalances(): Promise<WalletAsset[]> {
     const r = await this.signed<{ balances: WalletAsset[] }>('GET', '/api/v3/account', { omitZeroBalances: 'true' });
     return r.balances.filter((b) => Number(b.free) + Number(b.locked) > 0);

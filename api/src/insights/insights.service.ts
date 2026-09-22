@@ -124,9 +124,14 @@ export class InsightsService {
         LEFT JOIN transactions t ON ${SPEND} AND (t."occurredAt" AT TIME ZONE ${TZ})::date = d::date
         GROUP BY d ORDER BY d`,
     ]);
-    const pending = await this.db.transaction.count({ where: { status: 'pending' } });
+    const [pending, all] = await Promise.all([
+      this.db.transaction.count({ where: { status: 'pending' } }),
+      this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
+    ]);
+    // Binance part from the all-wallets snapshot (Earn, bots, other coins) when we have it; synced accounts only hold USDT
+    const binanceAll = all ? Object.values(all.balances as Record<string, number>).reduce((n, v) => n + Number(v), 0) : null;
     return {
-      netWorthUsd: balances.reduce((n, b) => n + (b.balanceUsd ?? 0), 0),
+      netWorthUsd: balances.reduce((n, b) => n + (binanceAll != null && b.kind === 'synced' ? 0 : b.balanceUsd ?? 0), 0) + (binanceAll ?? 0),
       today: Number(s.today), week: Number(s.week), month: Number(s.month), lastMonth: Number(s.lastMonth),
       toJustify: Number(s.toJustify), pending,
       rates: { bcv: bcv ? Number(bcv.vesPerUsd) : null, p2p: p2p ? Number(p2p.vesPerUsd) : null, market: market ? Number(market.vesPerUsd) : null },
