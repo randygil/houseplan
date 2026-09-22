@@ -88,6 +88,13 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       const [, act, id, arg] = ctx.callbackQuery.data.split(':');
       await this.onTxButton(act, Number(id), arg, ctx.callbackQuery.message?.message_id);
     }));
+    bot.callbackQuery(/^p:/, (ctx) => safe(async () => {
+      await ctx.answerCallbackQuery().catch(() => {});
+      const [, act, y] = ctx.callbackQuery.data.split(':');
+      const msgId = ctx.callbackQuery.message?.message_id;
+      if (act === 'no') return msgId && this.edit(msgId, '👌 Ok, no toqué nada.');
+      return this.bulkPending(act as 'ok' | 'void', y === 'y', msgId);
+    }));
     bot.callbackQuery(/^[rs]:/, (ctx) => safe(async () => {
       await ctx.answerCallbackQuery().catch(() => {});
       const [k, a, b] = ctx.callbackQuery.data.split(':');
@@ -512,10 +519,32 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   }
 
   private async pendientes() {
-    const { items } = await this.insights.listTransactions({ status: 'pending', limit: 5 });
-    if (!items.length) return this.send('Nada pendiente 🎉');
-    await this.send(`📝 Tienes ${items.length === 5 ? '5 o más' : items.length} por revisar:`);
+    const [total, { items }] = await Promise.all([
+      this.db.transaction.count({ where: { status: 'pending' } }),
+      this.insights.listTransactions({ status: 'pending', limit: 5 }),
+    ]);
+    if (!total) return this.send('Nada pendiente 🎉');
+    await this.send(`📝 Tienes <b>${total}</b> por revisar.${total > 5 ? ' Te muestro los 5 más recientes.' : ''}`,
+      new InlineKeyboard().text('✅ Confirmar todos', 'p:ok').text('🗑️ Descartar todos', 'p:void'));
     for (const t of items) await this.showTx(t.id);
+  }
+
+  /** Bulk "empezar de 0": resolve every pending tx, cancel queued nudges, close open bags. */
+  private async bulkPending(act: 'ok' | 'void', sure: boolean, msgId?: number) {
+    const n = await this.db.transaction.count({ where: { status: 'pending' } });
+    if (!sure) {
+      const what = act === 'ok' ? `confirmar los ${n} como están` : `descartar los ${n} (no cuentan en reportes)`;
+      const k = new InlineKeyboard().text('Sí, hazlo', `p:${act}:y`).text('No', 'p:no');
+      return msgId ? this.edit(msgId, `¿Seguro? Voy a ${what}, cancelar los recordatorios y cerrar las bolsas abiertas.`, k) : undefined;
+    }
+    // ponytail: bulk skips transaction_versions/bag re-allocation — bags are closed below anyway
+    await this.db.$transaction([
+      this.db.transaction.updateMany({ where: { status: 'pending' }, data: act === 'ok' ? { status: 'confirmed', justified: true } : { status: 'void' } }),
+      this.db.pendingPrompt.updateMany({ where: { answeredAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } }),
+      this.db.bag.updateMany({ where: { closedAt: null }, data: { closedAt: new Date() } }),
+    ]);
+    const done = `${act === 'ok' ? '✅ Confirmé' : '🗑️ Descarté'} ${n} movimientos. Empiezas de 0 🎉\nSi quieres, usa /conciliar para poner el saldo real de tus bancos hoy.`;
+    return msgId ? this.edit(msgId, done) : this.send(done);
   }
 
   private async conciliar() {
