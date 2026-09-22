@@ -1,0 +1,233 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+// Money: Decimal(24,8). Amounts are always positive; direction comes from from/to accounts + type.
+
+/// kind: synced (Binance API) | ledger (estimated, reconciled by hand)
+model Account {
+  id                    Int       @id @default(autoincrement())
+  code                  String    @unique /// binance_spot | binance_funding | mercantil | bdv | cash_usd | cash_ves
+  name                  String
+  currency              String    /// USDT | VES | USD
+  kind                  String
+  openingBalance        Decimal   @default(0) @db.Decimal(24, 8)
+  openingAt             DateTime  @default(now()) @db.Timestamptz
+  lastReconciledBalance Decimal?  @db.Decimal(24, 8)
+  lastReconciledAt      DateTime? @db.Timestamptz
+  payMethodAliases      String[]  @default([]) /// Binance payMethodName values that map to this account
+
+  outgoing      Transaction[] @relation("from")
+  incoming      Transaction[] @relation("to")
+  bags          Bag[]
+  merchantRules MerchantRule[]
+
+  @@map("accounts")
+}
+
+model RawEvent {
+  id          Int       @id @default(autoincrement())
+  source      String    /// p2p | pay | funding_transfer | ...
+  externalId  String
+  payload     Json
+  occurredAt  DateTime  @db.Timestamptz
+  ingestedAt  DateTime  @default(now()) @db.Timestamptz
+  processedAt DateTime? @db.Timestamptz
+
+  transactions Transaction[]
+
+  @@unique([source, externalId])
+  @@map("raw_events")
+}
+
+model Category {
+  id               Int        @id @default(autoincrement())
+  name             String
+  parentId         Int?
+  parent           Category?  @relation("tree", fields: [parentId], references: [id])
+  children         Category[] @relation("tree")
+  emoji            String?
+  budgetMonthlyUsd Decimal?   @db.Decimal(24, 8)
+
+  transactions  Transaction[]
+  merchantRules MerchantRule[]
+
+  @@map("categories")
+}
+
+/// One per P2P SELL: VES landed in a bank account at a real rate; expenses drain it FIFO.
+model Bag {
+  id               Int       @id @default(autoincrement())
+  p2pTransactionId Int       @unique
+  accountId        Int
+  account          Account   @relation(fields: [accountId], references: [id])
+  amountVes        Decimal   @db.Decimal(24, 8)
+  remainingVes     Decimal   @db.Decimal(24, 8)
+  rate             Decimal   @db.Decimal(24, 8) /// VES per USDT
+  openedAt         DateTime  @db.Timestamptz
+  closedAt         DateTime? @db.Timestamptz
+  muted            Boolean   @default(false) /// "no preguntes por este"
+
+  allocations BagAllocation[]
+  transactions Transaction[]
+
+  @@map("bags")
+}
+
+/// type: transfer | expense | income | fee
+/// status: pending | confirmed | void
+/// source: manual_text | manual_voice | manual_photo | p2p | pay | card_delta | reconcile | backfill
+model Transaction {
+  id            Int       @id @default(autoincrement())
+  type          String
+  status        String    @default("pending")
+  occurredAt    DateTime  @db.Timestamptz
+  amount        Decimal   @db.Decimal(24, 8) /// positive, in `currency`
+  currency      String
+  amountUsd     Decimal?  @db.Decimal(24, 8)
+  fxRate        Decimal?  @db.Decimal(24, 8)
+  fxSource      String?   /// bag | p2p_avg | bcv | manual | none
+  fromAccountId Int?
+  fromAccount   Account?  @relation("from", fields: [fromAccountId], references: [id])
+  toAccountId   Int?
+  toAccount     Account?  @relation("to", fields: [toAccountId], references: [id])
+  toAmount      Decimal?  @db.Decimal(24, 8) /// cross-currency transfers (USDT -> VES)
+  categoryId    Int?
+  category      Category? @relation(fields: [categoryId], references: [id])
+  merchant      String?
+  note          String?
+  justified     Boolean   @default(false)
+  justification String?
+  source        String
+  rawEventId    Int?
+  rawEvent      RawEvent? @relation(fields: [rawEventId], references: [id])
+  bagId         Int?
+  bag           Bag?      @relation(fields: [bagId], references: [id])
+  confidence    Float?
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+
+  versions    TransactionVersion[]
+  allocations BagAllocation[]
+
+  @@index([occurredAt])
+  @@index([status, type])
+  @@map("transactions")
+}
+
+model TransactionVersion {
+  id            Int         @id @default(autoincrement())
+  transactionId Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  snapshot      Json        /// row BEFORE the change
+  reason        String      /// create | edit | void | undo
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+
+  @@map("transaction_versions")
+}
+
+model BagAllocation {
+  bagId         Int
+  bag           Bag         @relation(fields: [bagId], references: [id])
+  transactionId Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  amountVes     Decimal     @db.Decimal(24, 8)
+
+  @@id([bagId, transactionId])
+  @@map("bag_allocations")
+}
+
+model MerchantRule {
+  id         Int      @id @default(autoincrement())
+  pattern    String   @unique /// normalized lowercase merchant
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+  accountId  Int?
+  account    Account? @relation(fields: [accountId], references: [id])
+  hits       Int      @default(1)
+
+  @@map("merchant_rules")
+}
+
+model WalletSnapshot {
+  id       Int      @id @default(autoincrement())
+  takenAt  DateTime @default(now()) @db.Timestamptz
+  wallet   String   @default("funding") /// funding | spot
+  balances Json     /// { "USDT": "123.4", ... }
+
+  @@index([wallet, takenAt])
+  @@map("wallet_snapshots")
+}
+
+model FxRate {
+  date      DateTime @db.Date
+  source    String   /// bcv | p2p_avg | market
+  vesPerUsd Decimal  @db.Decimal(24, 8)
+
+  @@id([date, source])
+  @@map("fx_rates")
+}
+
+/// kind: p2p_intro | bag_followup | reconcile | card_delta | pay_classify | ask_account | daily_summary | weekly_summary
+model PendingPrompt {
+  id                Int       @id @default(autoincrement())
+  kind              String
+  refId             Int?
+  payload           Json      @default("{}")
+  dueAt             DateTime  @db.Timestamptz
+  sentAt            DateTime? @db.Timestamptz
+  answeredAt        DateTime? @db.Timestamptz
+  cancelledAt       DateTime? @db.Timestamptz
+  telegramMessageId BigInt?
+  attempts          Int       @default(0)
+
+  @@index([dueAt])
+  @@map("pending_prompts")
+}
+
+model ChatTurn {
+  id        Int      @id @default(autoincrement())
+  role      String   /// user | bot
+  text      String
+  txIds     Int[]    @default([])
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@map("chat_turns")
+}
+
+/// Polymorphic. Vector column is read/written via $queryRaw (Prisma has no native vector type).
+/// Dim 384 = multilingual-e5-small; changing model => new migration.
+model Embedding {
+  id        Int                        @id @default(autoincrement())
+  ownerType String                     /// transaction | summary
+  ownerId   Int
+  content   String
+  embedding Unsupported("vector(384)")
+  createdAt DateTime                   @default(now()) @db.Timestamptz
+
+  @@unique([ownerType, ownerId])
+  @@map("embeddings")
+}
+
+model Setting {
+  key   String @id
+  value Json
+
+  @@map("settings")
+}
+
+/// Magic-link sessions for the web panel outside Telegram
+model WebSession {
+  token     String   @id
+  expiresAt DateTime @db.Timestamptz
+
+  @@map("web_sessions")
+}

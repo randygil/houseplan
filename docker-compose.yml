@@ -1,0 +1,50 @@
+# Prod (Coolify): only `web` gets a domain; nginx proxies /api -> api. Local ports live in docker-compose.override.yml.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: plata
+      POSTGRES_USER: plata
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plata"]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://plata:${DB_PASSWORD}@db:5432/plata
+      TZ: America/Caracas
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      BINANCE_KEY: ${BINANCE_KEY:-}
+      BINANCE_SECRET: ${BINANCE_SECRET:-}
+      BINANCE_BASE: ${BINANCE_BASE:-https://api.binance.com}
+      TG_TOKEN: ${TG_TOKEN:?set TG_TOKEN}
+      TG_ALLOWED_ID: ${TG_ALLOWED_ID:?set TG_ALLOWED_ID}
+      TG_WEBHOOK_SECRET: ${TG_WEBHOOK_SECRET:?set TG_WEBHOOK_SECRET}
+      TG_POLLING: ${TG_POLLING:-0}
+      OMNI_URL: ${OMNI_URL:-https://omniroute.randygil.com/v1/chat/completions}
+      OMNI_KEY: ${OMNI_KEY:?set OMNI_KEY}
+      OMNI_MODEL: ${OMNI_MODEL:-antigravity/gemini-2.5-flash}
+      OMNI_SMART_MODEL: ${OMNI_SMART_MODEL:-antigravity/claude-sonnet-5}
+      OMNI_VISION_MODEL: ${OMNI_VISION_MODEL:-antigravity/gemini-2.5-flash}
+      WHISPER_URL: ${WHISPER_URL:-}
+      NUDGE_TIMES: ${NUDGE_TIMES:-13:30,20:30}
+      QUIET_HOURS: ${QUIET_HOURS:-22:00-08:00}
+      NUDGE_DAILY_CAP: ${NUDGE_DAILY_CAP:-4}
+      JUSTIFY_OVER_USD: ${JUSTIFY_OVER_USD:-20}
+      CARD_DELTA_MIN_USDT: ${CARD_DELTA_MIN_USDT:-1}
+    depends_on:
+      db: { condition: service_healthy }
+    volumes: [hf:/data/hf]   # embedding model cache (~120 MB)
+  web:
+    build: ./web
+    restart: unless-stopped
+    depends_on: [api]
+    expose: ["80"]
+volumes:
+  pgdata: {}
+  hf: {}

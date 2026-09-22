@@ -1,0 +1,10 @@
+{
+  "name": "Plata",
+  "short_name": "Plata",
+  "lang": "es",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#1c5cab",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
