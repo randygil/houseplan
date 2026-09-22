@@ -95,11 +95,13 @@ export class LedgerService {
     const accounts = await this.db.account.findMany({ orderBy: { id: 'asc' } });
     const rate = await this.fx.rate(new Date());
     return Promise.all(accounts.map(async (a) => {
-      const balance = await this.balanceOf(a);
+      const synced = a.kind === 'synced' ? await this.syncedBalance(a) : null;
+      const balance = synced?.balance ?? await this.balanceOf(a, true);
       return {
         accountId: a.id, code: a.code, name: a.name, currency: a.currency, kind: a.kind, balance,
         balanceUsd: isUsd(a.currency) ? balance : rate ? balance / rate : null,
         lastReconciledAt: a.lastReconciledAt,
+        lastSyncedAt: synced?.at ?? null, // null on a synced account = never read from Binance yet
       };
     }));
   }
@@ -128,12 +130,23 @@ export class LedgerService {
 
   // ---- internals
 
+  /** Binance wallet value in USDT: the all-wallets snapshot (counts every coin) or else the per-asset one. */
+  private async syncedBalance(a: Account): Promise<{ balance: number; at: Date } | null> {
+    const spot = a.code.endsWith('spot');
+    const [all, own] = await Promise.all([
+      this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
+      this.db.walletSnapshot.findFirst({ where: { wallet: spot ? 'spot' : 'funding' }, orderBy: { takenAt: 'desc' } }),
+    ]);
+    const fromAll = all && (own == null || all.takenAt >= own.takenAt) ? (all.balances as Record<string, unknown>)[spot ? 'Spot' : 'Funding'] ?? 0 : null;
+    if (fromAll != null) return { balance: Number(fromAll), at: all!.takenAt };
+    const v = (own?.balances as Record<string, unknown> | undefined)?.[a.currency];
+    return own ? { balance: Number(v ?? 0), at: own.takenAt } : null;
+  }
+
   private async balanceOf(a: Account, ledgerOnly = false): Promise<number> {
     if (a.kind === 'synced' && !ledgerOnly) {
-      const wallet = a.code.endsWith('spot') ? 'spot' : 'funding';
-      const snap = await this.db.walletSnapshot.findFirst({ where: { wallet }, orderBy: { takenAt: 'desc' } });
-      const v = (snap?.balances as Record<string, unknown> | undefined)?.[a.currency];
-      if (v != null) return Number(v);
+      const s = await this.syncedBalance(a);
+      if (s) return s.balance;
     }
     const base = Number(a.lastReconciledBalance ?? a.openingBalance);
     const since = a.lastReconciledAt ?? a.openingAt;

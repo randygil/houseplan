@@ -48,7 +48,7 @@ export type Overview = {
 
 export type Balance = {
   accountId: number; code: string; name: string; currency: string; kind: string
-  balance: Money; balanceUsd: Money | null; lastReconciledAt: string | null
+  balance: Money; balanceUsd: Money | null; lastReconciledAt: string | null; lastSyncedAt: string | null
 }
 
 export type SummaryRow = { key: string; label: string; total: number; count: number }

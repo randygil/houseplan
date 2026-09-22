@@ -480,7 +480,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     const now = Date.now();
     const lines = accs.map((a) => {
       const usdPart = a.currency !== 'USD' && a.balanceUsd != null ? ` (≈ ${usd(a.balanceUsd)})` : '';
-      const tag = a.kind === 'synced' ? 'sincronizado' : a.lastReconciledAt ? `estimado · conciliado hace ${Math.max(0, Math.round((now - a.lastReconciledAt.getTime()) / 864e5))} d` : 'estimado';
+      const tag = a.kind === 'synced' ? (a.lastSyncedAt ? `sincronizado ${hhmm(a.lastSyncedAt)}` : 'sin leer aún · usa /sync') : a.lastReconciledAt ? `estimado · conciliado hace ${Math.max(0, Math.round((now - a.lastReconciledAt.getTime()) / 864e5))} d` : 'estimado';
       return `<b>${esc(a.name)}</b>: ${money(Math.round(a.balance * 100) / 100, a.currency)}${usdPart}\n   <i>${tag}</i>`;
     });
     const total = (await this.insights.overview()).netWorthUsd; // includes every Binance wallet when snapshotted

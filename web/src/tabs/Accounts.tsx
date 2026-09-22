@@ -21,7 +21,7 @@ export default function Accounts() {
                 <div className="truncate text-[15px] font-medium">{b.name}</div>
                 <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[12px] text-muted">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ledger ? 'bg-warn' : 'bg-good'}`} />
-                  <span className="truncate">{ledger ? `estimado · conciliado ${ago(b.lastReconciledAt)}` : 'sincronizado'}</span>
+                  <span className="truncate">{ledger ? `estimado · conciliado ${ago(b.lastReconciledAt)}` : b.lastSyncedAt ? `sincronizado ${ago(b.lastSyncedAt)}` : 'sin leer aún'}</span>
                 </div>
               </div>
               <div className="shrink-0 text-right">
