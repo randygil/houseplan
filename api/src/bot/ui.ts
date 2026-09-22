@@ -55,7 +55,7 @@ export type CardTx = {
   category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string } | null;
 };
 
-const FX_LABEL: Record<string, string> = { bag: 'de tu cambio', p2p_avg: 'P2P prom.', bcv: 'BCV', manual: 'manual' };
+const FX_LABEL: Record<string, string> = { bag: 'de tu cambio', p2p_avg: 'P2P prom.', market: 'P2P mercado', bcv: 'BCV', manual: 'manual' };
 
 /** Tx card (HTML). `catPath` = "Comida › Panadería" when known. */
 export function txCard(t: CardTx, catPath?: string | null, now = new Date()): string {

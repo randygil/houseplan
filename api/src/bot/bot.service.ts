@@ -75,7 +75,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     bot.command('pendientes', () => safe(() => this.pendientes()));
     bot.command('conciliar', () => safe(() => this.conciliar()));
     bot.command('panel', () => safe(() => this.panel()));
-    bot.command('sync', () => safe(async () => { await this.send('🔄 Sincronizando…'); await this.binance.syncNow(); await this.send('✅ Listo.'); }));
+    bot.command('sync', () => safe(async () => { await this.send('🔄 Sincronizando…'); await this.binance.syncNow(); await this.syncStatus(); }));
     bot.command('backfill', () => safe(async () => {
       await this.send('⏳ Importando historial de Binance, esto tarda un rato…');
       const r = await this.binance.backfill();
@@ -523,6 +523,26 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     const k = new InlineKeyboard();
     accs.forEach((a, i) => { k.text(a.name, cb('r', a.accountId)); if (i % 2) k.row(); });
     return this.send('¿Qué cuenta quieres cuadrar?', k);
+  }
+
+  /** What Binance data we actually have — proof the sync reads your P2P. */
+  private async syncStatus() {
+    const [p2pCount, payCount, last, snap] = await Promise.all([
+      this.db.rawEvent.count({ where: { source: 'p2p' } }),
+      this.db.rawEvent.count({ where: { source: 'pay' } }),
+      this.db.rawEvent.findMany({ where: { source: 'p2p' }, orderBy: { occurredAt: 'desc' }, take: 3 }),
+      this.db.walletSnapshot.findFirst({ where: { wallet: 'funding' }, orderBy: { takenAt: 'desc' } }),
+    ]);
+    const lines = last.map((e) => {
+      const o = e.payload as any;
+      return `• ${dayLabel(e.occurredAt, new Date())} ${hhmm(e.occurredAt)} ${o.tradeType === 'SELL' ? 'Vendí' : 'Compré'} ${money(Number(o.amount), o.asset)} → ${money(Number(o.totalPrice), o.fiat)} @ ${Number(o.unitPrice)} · ${esc(o.payMethodName ?? '¿banco?')} · ${esc(o.orderStatus)}`;
+    });
+    const usdt = snap ? Number((snap.balances as any)?.USDT ?? 0) : null;
+    return this.send([
+      `✅ Binance: <b>${p2pCount}</b> órdenes P2P y <b>${payCount}</b> pagos guardados.`,
+      ...(lines.length ? ['', 'Últimos P2P:', ...lines] : ['Aún no veo órdenes P2P (¿key sin permiso de lectura o sin /backfill?).']),
+      '', snap ? `Funding: ${money(usdt!, 'USDT')} · leído ${hhmm(snap.takenAt)}` : 'Funding: sin lectura todavía.',
+    ].join('\n'));
   }
 
   private async panel() {
