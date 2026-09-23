@@ -142,7 +142,9 @@ export class ApiController {
   @Post('ask')
   ask(@Body() b: { question?: unknown }) {
     if (typeof b?.question !== 'string' || !b.question.trim()) throw new BadRequestException('question required');
-    return this.asker.ask(b.question.trim().slice(0, 2000));
+    // single-user panel: surface the real cause (omniroute down, bad key…) instead of a bare 500
+    return this.asker.ask(b.question.trim().slice(0, 2000))
+      .catch((e) => ({ answer: `⚠️ No pude responder: ${(e as Error).message}` }));
   }
 
   private async found(id: number) {

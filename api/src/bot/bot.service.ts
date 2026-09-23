@@ -112,7 +112,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       let text: string;
       try { text = await this.transcriber.transcribe(buf, 'ogg'); }
       catch (e) {
-        return this.send(/no está configurada/.test((e as Error).message) ? '🎙️ La voz no está configurada todavía; escríbemelo porfa.' : '🎙️ No pude entender el audio 😅 ¿Me lo escribes?');
+        return this.send(/no está configurada/.test((e as Error).message) ? `🎙️ No pude transcribir 😅\n<code>${esc((e as Error).message)}</code>` : '🎙️ No pude entender el audio 😅 ¿Me lo escribes?');
       }
       if (!text) return this.send('🎙️ No escuché nada 🤔');
       await this.send(`🎙️ <i>«${esc(text)}»</i>`);

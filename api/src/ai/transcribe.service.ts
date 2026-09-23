@@ -9,6 +9,7 @@ export class TranscribeService {
   constructor(private llm: LlmService) {}
 
   async transcribe(audio: Buffer, format = 'ogg'): Promise<string> {
+    let omniErr = 'OMNI_KEY vacía';
     if (process.env.OMNI_KEY) {
       try {
         const text = await this.llm.chat([{
@@ -20,11 +21,12 @@ export class TranscribeService {
         }], this.llm.model, 500);
         return text.trim();
       } catch (e) {
-        this.log.warn(`omniroute audio falló: ${(e as Error).message}`);
+        omniErr = (e as Error).message;
+        this.log.warn(`omniroute audio falló: ${omniErr}`);
       }
     }
     const url = process.env.WHISPER_URL;
-    if (!url) throw new Error('La voz no está configurada');
+    if (!url) throw new Error(`La voz no está configurada (omniroute: ${omniErr.slice(0, 200)})`);
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(audio)], { type: `audio/${format}` }), `voice.${format}`);
     form.append('model', 'whisper-1');
