@@ -89,8 +89,7 @@ export function normAccount(a: unknown, codes: string[], currency: string | null
   const pick = (c: string) => (codes.includes(c) ? c : null);
   if (/mercantil/.test(t)) return pick('mercantil');
   if (/bdv|venezuela/.test(t)) return pick('bdv');
-  if (/spot/.test(t)) return pick('binance_spot');
-  if (/binance|funding|tarjeta|card/.test(t)) return pick('binance_funding');
+  if (/binance|funding|spot|tarjeta|card/.test(t)) return pick('binance');
   if (/efectivo|cash/.test(t)) return pick(currency === 'VES' ? 'cash_ves' : 'cash_usd');
   return null;
 }

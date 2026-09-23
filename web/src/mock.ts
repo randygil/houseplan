@@ -7,8 +7,7 @@ const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)]
 const BCV = 158.4, P2P = 205.3
 
 const accounts: Account[] = [
-  { id: 1, code: 'binance_spot', name: 'Binance Spot', currency: 'USDT', kind: 'synced' },
-  { id: 2, code: 'binance_funding', name: 'Binance Funding', currency: 'USDT', kind: 'synced' },
+  { id: 2, code: 'binance', name: 'Binance', currency: 'USDT', kind: 'synced' },
   { id: 3, code: 'mercantil', name: 'Mercantil', currency: 'VES', kind: 'ledger' },
   { id: 4, code: 'bdv', name: 'Banco de Venezuela', currency: 'VES', kind: 'ledger' },
   { id: 5, code: 'cash_usd', name: 'Efectivo USD', currency: 'USD', kind: 'ledger' },
@@ -38,10 +37,10 @@ for (let i = 0; i < 140; i++) {
   at.setUTCHours(12 + Math.floor(rnd() * 13) - 4 + 4, Math.floor(rnd() * 60))
   if (at.getTime() > now) at.setTime(now - rnd() * 36e5 * 5)
   const [merchant, categoryId] = pick(merchants)
-  const acc = pick([accounts[2], accounts[3], accounts[4], accounts[1], accounts[5]])
+  const acc = pick([accounts[1], accounts[2], accounts[3], accounts[0], accounts[4]])
   const usd = Math.round((2 + rnd() * rnd() * 60) * 100) / 100
   const ves = acc.currency === 'VES'
-  const src = acc.code === 'binance_funding' ? pick(['card_delta', 'pay']) : pick(sources.filter((s) => s !== 'card_delta' && s !== 'pay'))
+  const src = acc.code === 'binance' ? pick(['card_delta', 'pay']) : pick(sources.filter((s) => s !== 'card_delta' && s !== 'pay'))
   const pending = rnd() < 0.08
   txs.push(tx(i + 1, at, {
     type: 'expense', status: pending ? 'pending' : 'confirmed', amount: ves ? Math.round(usd * P2P * 100) / 100 : usd,
@@ -54,14 +53,14 @@ for (let w = 0; w < 8; w++) {
   const at = new Date(now - (w * 7 + 1) * 864e5)
   txs.push(tx(500 + w, at, {
     type: 'transfer', status: 'confirmed', amount: 150, currency: 'USDT', amountUsd: 150, toAmount: 150 * P2P,
-    fromAccountId: 2, fromAccount: accounts[1], toAccountId: 3, toAccount: accounts[2], source: 'p2p', fxRate: P2P, fxSource: 'p2p_avg',
+    fromAccountId: 2, fromAccount: accounts[0], toAccountId: 3, toAccount: accounts[1], source: 'p2p', fxRate: P2P, fxSource: 'p2p_avg',
   }))
   txs.push(tx(600 + w, new Date(at.getTime() + 1000), {
-    type: 'fee', status: 'confirmed', amount: 0.3, currency: 'USDT', amountUsd: 0.3, fromAccountId: 2, fromAccount: accounts[1], source: 'p2p',
+    type: 'fee', status: 'confirmed', amount: 0.3, currency: 'USDT', amountUsd: 0.3, fromAccountId: 2, fromAccount: accounts[0], source: 'p2p',
   }))
 }
 txs.push(tx(900, new Date(now - 2 * 36e5), {
-  type: 'expense', status: 'pending', amount: 3420, currency: 'VES', amountUsd: 16.66, fromAccountId: 3, fromAccount: accounts[2],
+  type: 'expense', status: 'pending', amount: 3420, currency: 'VES', amountUsd: 16.66, fromAccountId: 3, fromAccount: accounts[1],
   source: 'reconcile', merchant: null, justified: false, note: 'Diferencia de conciliación',
 }))
 txs.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))

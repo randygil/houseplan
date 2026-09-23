@@ -119,7 +119,7 @@ export class BinanceService {
     const occurredAt = new Date(o.createTime);
     const crypto = Number(o.amount), fiat = Number(o.totalPrice), rate = Number(o.unitPrice);
     const fee = Number(o.commission) || Number(o.takerCommission) || 0;
-    const funding = await this.ledger.accountByCode('binance_funding');
+    const funding = await this.ledger.accountByCode('binance');
     const bank = await this.ledger.accountByPayMethod(o.payMethodName);
     const status = bank ? 'confirmed' : 'pending';
     const note = `P2P ${o.tradeType} ${crypto} ${o.asset} @ ${rate} (${o.payMethodName}, ${o.counterPartNickName})`;
@@ -163,7 +163,7 @@ export class BinanceService {
   private async processPay(rawEventId: number, t: PayTx, mode: Mode) {
     const amt = Number(t.amount);
     if (!amt) return;
-    const account = await this.ledger.accountByCode(t.walletType === 2 ? 'binance_spot' : 'binance_funding');
+    const account = await this.ledger.accountByCode('binance');
     const occurredAt = new Date(t.transactionTime);
     const base = { occurredAt, amount: Math.abs(amt), currency: t.currency, source: 'pay', rawEventId };
 
@@ -207,7 +207,7 @@ export class BinanceService {
     const prevBal = Object.fromEntries(Object.entries(prev.balances as Record<string, string>).map(([k, v]) => [k, Number(v)]));
     const drops = fundingDelta(prevBal, balances, fresh, Number(process.env.CARD_DELTA_MIN_USDT ?? 1));
     if (!drops.length) return;
-    const funding = await this.ledger.accountByCode('binance_funding');
+    const funding = await this.ledger.accountByCode('binance');
     for (const { asset, drop } of drops) {
       this.log.log(`unexplained funding drop ${drop} ${asset} -> card_delta`);
       const tx = await this.ledger.create({ type: 'expense', status: 'pending', occurredAt: now, amount: drop, currency: asset, fromAccountId: funding.id, note: 'probable tarjeta', source: 'card_delta' });

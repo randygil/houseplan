@@ -7,8 +7,7 @@ const db = new PrismaClient({
 });
 
 const accounts = [
-  { code: 'binance_spot', name: 'Binance Spot', currency: 'USDT', kind: 'synced', payMethodAliases: [] },
-  { code: 'binance_funding', name: 'Binance Funding', currency: 'USDT', kind: 'synced', payMethodAliases: [] },
+  { code: 'binance', name: 'Binance', currency: 'USDT', kind: 'synced', payMethodAliases: [] },
   { code: 'mercantil', name: 'Mercantil', currency: 'VES', kind: 'ledger', payMethodAliases: ['Mercantil', 'BancoMercantil', 'Banco Mercantil'] },
   { code: 'bdv', name: 'BDV', currency: 'VES', kind: 'ledger', payMethodAliases: ['BDV', 'Banco de Venezuela', 'BancoDeVenezuela', 'BancodeVenezuela'] },
   { code: 'cash_usd', name: 'Efectivo USD', currency: 'USD', kind: 'ledger', payMethodAliases: [] },

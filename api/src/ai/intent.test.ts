@@ -9,7 +9,7 @@ const accounts = [
   { code: 'bdv', name: 'BDV', currency: 'VES', balance: 100 },
   { code: 'cash_usd', name: 'Efectivo $', currency: 'USD', balance: 40 },
   { code: 'cash_ves', name: 'Efectivo Bs', currency: 'VES', balance: 0 },
-  { code: 'binance_funding', name: 'Funding', currency: 'USDT', balance: 12 },
+  { code: 'binance', name: 'Binance', currency: 'USDT', balance: 12 },
 ];
 
 test('parseAmount: formatos venezolanos y jerga', () => {

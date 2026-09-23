@@ -130,17 +130,14 @@ export class LedgerService {
 
   // ---- internals
 
-  /** Binance wallet value in USDT: the all-wallets snapshot (counts every coin) or else the per-asset one. */
+  /** The single Binance account = USDT value of every wallet (all-wallets snapshot), else funding+spot USDT. */
   private async syncedBalance(a: Account): Promise<{ balance: number; at: Date } | null> {
-    const spot = a.code.endsWith('spot');
-    const [all, own] = await Promise.all([
-      this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
-      this.db.walletSnapshot.findFirst({ where: { wallet: spot ? 'spot' : 'funding' }, orderBy: { takenAt: 'desc' } }),
-    ]);
-    const fromAll = all && (own == null || all.takenAt >= own.takenAt) ? (all.balances as Record<string, unknown>)[spot ? 'Spot' : 'Funding'] ?? 0 : null;
-    if (fromAll != null) return { balance: Number(fromAll), at: all!.takenAt };
-    const v = (own?.balances as Record<string, unknown> | undefined)?.[a.currency];
-    return own ? { balance: Number(v ?? 0), at: own.takenAt } : null;
+    const last = (wallet: string) => this.db.walletSnapshot.findFirst({ where: { wallet }, orderBy: { takenAt: 'desc' } });
+    const [all, funding, spot] = await Promise.all([last('all'), last('funding'), last('spot')]);
+    const sum = (s: { balances: unknown } | null) => Object.values((s?.balances ?? {}) as Record<string, unknown>).reduce<number>((n, v) => n + Number(v), 0);
+    if (all) return { balance: sum(all), at: all.takenAt };
+    const usdt = (s: { balances: unknown } | null) => Number((s?.balances as Record<string, unknown> | undefined)?.[a.currency] ?? 0);
+    return funding || spot ? { balance: usdt(funding) + usdt(spot), at: (funding ?? spot)!.takenAt } : null;
   }
 
   private async balanceOf(a: Account, ledgerOnly = false): Promise<number> {
