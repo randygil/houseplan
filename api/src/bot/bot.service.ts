@@ -280,6 +280,14 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       this.log.error(`parse: ${(e as Error).message}`);
       return this.send('Uy, no pude procesar eso ahorita 😅 Intenta de nuevo en un momento.');
     }
+    if (p.sync) {
+      await this.send('🔄 Sincronizando Binance…');
+      await this.binance.syncNow().then(() => this.syncStatus(), (e) => this.send(`⚠️ No pude sincronizar: ${esc((e as Error).message)}`));
+    }
+    // Safety net: the model sometimes files "anota X…" + other orders as smalltalk. Amounts present => register them.
+    if (p.intent === 'smalltalk' && p.items.some((i) => i.amount != null))
+      p = { ...p, intent: 'add_expense' };
+    if (p.sync && p.intent === 'smalltalk') return;
     switch (p.intent) {
       case 'add_expense': case 'add_income': return this.addItems(p, source);
       case 'edit': return this.editTx(p);

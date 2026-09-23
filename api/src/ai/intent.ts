@@ -9,7 +9,7 @@ export type Item = {
 };
 export type Parsed = {
   intent: Intent; items: Item[]; targetTxId: number | null; patch: Partial<Item> | null;
-  balance: { account: string | null; amount: number } | null; confidence: number; needs: string[]; reply: string | null;
+  balance: { account: string | null; amount: number } | null; confidence: number; needs: string[]; reply: string | null; sync: boolean;
 };
 export type IntentCtx = {
   now: Date;
@@ -28,7 +28,7 @@ export const norm = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 export const INTENT_SCHEMA =
-  '{"intent":"add_expense|add_income|edit|undo|delete|answer_prompt|ask|set_balance|smalltalk","items":[{"amount":number|null,"currency":"VES|USD|USDT"|null,"account":"<code>"|null,"merchant":string|null,"category":"<ruta>"|null,"occurred_at":"YYYY-MM-DDTHH:mm"|null,"note":string|null}],"target_tx_id":number|null,"patch":{...campos de item a cambiar}|null,"balance":{"account":"<code>","amount":number}|null,"confidence":0..1,"needs":[],"reply":string|null}';
+  '{"intent":"add_expense|add_income|edit|undo|delete|answer_prompt|ask|set_balance|smalltalk","items":[{"amount":number|null,"currency":"VES|USD|USDT"|null,"account":"<code>"|null,"merchant":string|null,"category":"<ruta>"|null,"occurred_at":"YYYY-MM-DDTHH:mm"|null,"note":string|null}],"target_tx_id":number|null,"patch":{...campos de item a cambiar}|null,"balance":{"account":"<code>","amount":number}|null,"confidence":0..1,"needs":[],"sync":boolean,"reply":string|null}';
 
 export function buildIntentPrompt(text: string, ctx: IntentCtx): string {
   const accts = ctx.accounts.map((a) => `- ${a.code} (${a.name}, ${a.currency}): ~${Math.round(a.balance * 100) / 100}`).join('\n');
@@ -45,8 +45,12 @@ ${ctx.recent.join('\n') || '(ninguna)'}
 Prompt pendiente del bot: ${ctx.pending ?? '(ninguno)'}
 
 Reglas:
-- intent: add_expense (gasté/pagué/compré), add_income (me pagaron/cobré), edit (corrige una tx: "no, eran 500", "cámbialo a BDV"), undo ("deshaz eso"), delete ("borra el de la gasolina"), answer_prompt (responde al prompt pendiente), ask (pregunta sobre sus gastos/saldos), set_balance ("mercantil tiene 8400"), smalltalk (otra cosa; pon una respuesta corta y cálida en "reply").
-- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil" y "lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv); si no dice cuál, account=null. "efectivo" = cash_usd o cash_ves según la moneda. "tarjeta", "la Binance" = binance_funding.
+- IMPORTANTE: tú NO respondes al usuario ni ejecutas nada; sólo extraes. El bot ejecuta lo que pongas en el JSON.
+- Si el mensaje pide registrar uno o más gastos, intent=add_expense con TODOS los items, aunque también traiga otras órdenes ("sincroniza", "y luego…"). Nunca lo trates como smalltalk.
+- sync=true si pide sincronizar/actualizar Binance (puede ir junto con items; el bot sincroniza primero).
+- Si el mensaje es una confirmación ("sí", "dale", "hazlo", "ok") de gastos que el Bot mencionó en los últimos turnos y que no aparecen en Últimas transacciones, intent=add_expense con esos items.
+- intent: add_expense (gasté/pagué/compré), add_income (me pagaron/cobré), edit (corrige una tx: "no, eran 500", "cámbialo a BDV"), undo ("deshaz eso"), delete ("borra el de la gasolina"), answer_prompt (responde al prompt pendiente), ask (pregunta sobre sus gastos/saldos), set_balance ("mercantil tiene 8400"), smalltalk (sólo charla, nada que registrar; pon una respuesta corta y cálida en "reply", SIN afirmar ni prometer que hiciste o harás algo).
+- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil" y "lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv); si no dice cuál, account=null. "efectivo" = cash_usd o cash_ves según la moneda. "tarjeta", "la Binance", "spot", "funding" = binance.
 - Un mensaje puede traer varios gastos: un item por cada uno. Montos siempre positivos.
 - occurred_at en hora local sin zona; "ayer", "anoche", "el lunes" relativos a ahora. Si no dice, null.
 - merchant: el lugar o a quién se pagó, tal como lo dice ("panadería", "farmacia", "Farmatodo"), aunque sea genérico. category: exactamente una ruta de la lista; si no sabes, null.
@@ -144,6 +148,7 @@ export function normalizeIntent(raw: any, ctx: { now: Date; accounts: { code: st
     confidence: Number.isFinite(c) ? Math.min(1, Math.max(0, c)) : 0.5,
     needs: [...needs],
     reply: str(raw?.reply),
+    sync: raw?.sync === true,
   };
 }
 

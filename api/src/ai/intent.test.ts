@@ -85,3 +85,8 @@ test('unfence: quita cercos y prosa', () => {
   assert.equal(unfence('```json\n{"a":1}\n```'), '{"a":1}');
   assert.equal(unfence('Claro! {"a":[1]} listo'), '{"a":[1]}');
 });
+
+test('sync flag only when explicitly true', () => {
+  assert.equal(normalizeIntent({ intent: 'add_expense', items: [], sync: true }, { now, accounts }).sync, true);
+  assert.equal(normalizeIntent({ intent: 'add_expense', items: [], sync: 'yes' }, { now, accounts }).sync, false);
+});
