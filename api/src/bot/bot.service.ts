@@ -563,6 +563,11 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       this.db.walletSnapshot.findFirst({ where: { wallet: 'funding' }, orderBy: { takenAt: 'desc' } }),
       this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
     ]);
+    const [queued, sentToday, lastSent] = await Promise.all([
+      this.db.pendingPrompt.count({ where: { sentAt: null, answeredAt: null, cancelledAt: null } }),
+      this.db.pendingPrompt.count({ where: { sentAt: { gte: startOfDay(new Date()) } } }),
+      this.db.pendingPrompt.findFirst({ where: { sentAt: { not: null } }, orderBy: { sentAt: 'desc' } }),
+    ]);
     const wallets = Object.entries((all?.balances ?? {}) as Record<string, number>).sort((a, b) => b[1] - a[1]);
     const total = wallets.reduce((n, [, v]) => n + Number(v), 0);
     const lines = last.map((e) => {
@@ -575,6 +580,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       ...(lines.length ? ['', 'Últimos P2P:', ...lines] : ['Aún no veo órdenes P2P (¿key sin permiso de lectura o sin /backfill?).']),
       '', snap ? `Funding (USDT): ${money(usdt!, 'USDT')} · leído ${hhmm(snap.takenAt)}` : 'Funding: sin lectura todavía.',
       ...(wallets.length ? ['', `<b>Total Binance ≈ ${money(total, 'USDT')}</b>`, ...wallets.map(([w, v]) => `• ${esc(w)}: ${money(Number(v), 'USDT')}`)] : []),
+      '', `🔔 Avisos: ${queued} en cola · ${sentToday} enviados hoy${lastSent?.sentAt ? ` · último ${esc(lastSent.kind)} ${hhmm(lastSent.sentAt)}` : ''}`,
     ].join('\n'));
   }
 

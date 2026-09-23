@@ -14,6 +14,7 @@ import { atLocal, cb, dayLabel, esc, inQuiet, money, startOfDay, startOfWeek, us
 
 const TZ = 'America/Caracas';
 const ORDER = ['p2p_intro', 'card_delta', 'pay_classify', 'ask_account', 'reconcile', 'bag_followup'];
+const CAPPED = ['reconcile', 'bag_followup'];
 type Bagish = { id: number; amountVes: unknown; remainingVes: unknown; openedAt: Date; account: { name: string }; _count: { allocations: number } };
 
 /** Pure: text for one grouped bag_followup message (PLAN 4.3). */
@@ -86,11 +87,13 @@ export class NudgesService implements OnModuleInit {
     }
     await cancel(dead);
 
-    let budget = Number(process.env.NUDGE_DAILY_CAP ?? 4) - await this.db.pendingPrompt.count({ where: { sentAt: { gte: startOfDay(now) }, kind: { in: ORDER } } });
+    // Cap only the repetitive reminders; event prompts (a P2P/card/Pay that just happened) always go out.
+    let budget = Number(process.env.NUDGE_DAILY_CAP ?? 4) - await this.db.pendingPrompt.count({ where: { sentAt: { gte: startOfDay(now) }, kind: { in: CAPPED } } });
     const others = due.filter((p) => p.kind !== 'bag_followup').sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
     for (const p of others) {
-      if (budget <= 0) return;
-      if (await this.sendOne(p, now)) budget--;
+      const capped = CAPPED.includes(p.kind);
+      if (capped && budget <= 0) continue;
+      if (await this.sendOne(p, now) && capped) budget--;
     }
     if (live.length && budget > 0) await this.sendFollowups(live, now);
   }
