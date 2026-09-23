@@ -31,7 +31,7 @@ export class BinanceService {
   // ---------- scheduling ----------
 
   @Interval('sync:p2p', 2 * 60_000) cronP2p() { return this.cron(() => this.syncP2p()); }
-  // sync:pay and snapshot:funding share one 5-min run: the snapshot needs fresh P2P/Pay to explain deltas.
+  // sync:pay, snapshot:funding and snapshot:all share one 5-min run: the snapshot needs fresh P2P/Pay to explain deltas.
   @Interval('sync:pay+snapshot:funding', 5 * 60_000) cronFunding() { return this.cron(() => this.syncAll()); }
   @Cron('0 * * * *', { name: 'snapshot:spot' }) cronSpot() { return this.cron(() => this.snapshotSpot()); }
 
@@ -68,7 +68,7 @@ export class BinanceService {
     });
   }
 
-  private async syncAll() { await this.syncP2p(); await this.syncPay(); await this.snapshotFunding(); }
+  private async syncAll() { await this.syncP2p(); await this.syncPay(); await this.snapshotFunding(); await this.snapshotAll(); }
 
   // ---------- sync ----------
 
@@ -247,7 +247,10 @@ export class BinanceService {
     const balances: Record<string, number> = {};
     for (const b of await this.api.spotBalances()) balances[b.asset] = Number(b.free) + Number(b.locked);
     await this.db.walletSnapshot.create({ data: { wallet: 'spot', balances: toJson(balances) } });
-    // wallet 'all' = USDT value per Binance wallet (net worth incl. Earn/bots/other coins)
+  }
+
+  // wallet 'all' = USDT value per Binance wallet (net worth incl. Earn/bots/other coins)
+  async snapshotAll() {
     await this.db.walletSnapshot.create({ data: { wallet: 'all', balances: toJson(await this.api.walletBalances()) } });
   }
 
