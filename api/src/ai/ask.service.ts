@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InsightsService } from '../insights/insights.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { LedgerService, TxView } from '../ledger/ledger.service';
+import { runAgent } from './agent';
 import { EmbeddingsService } from './embeddings.service';
 import { caracasIso } from './intent';
 import { LlmService, Msg } from './llm.service';
@@ -12,7 +13,8 @@ export type AskAnswer = {
   chart?: { type: 'bar' | 'line'; data: { label: string; value: number }[] };
 };
 
-const TOOLS = `Herramientas (fechas ISO, rango [from, to) ; totales en USD salvo currency):
+export const READ_TOOLS = ['spend_summary', 'list_transactions', 'compare_periods', 'bag_status', 'balances', 'semantic_search'];
+export const TOOLS = `Consultas (devuelven datos para ti; fechas ISO, rango [from, to) ; totales en USD salvo currency):
 - spend_summary {from, to, group_by: "category"|"account"|"merchant"|"day", currency?: "USD"|"VES"}
 - list_transactions {from?, to?, category?, account?, merchant?, text?, min?, max?, type?, status?, limit?}
 - compare_periods {a_from, a_to, b_from, b_to, group_by: "category"|"account"|"merchant"}
@@ -21,7 +23,7 @@ const TOOLS = `Herramientas (fechas ISO, rango [from, to) ; totales en USD salvo
 - semantic_search {query, k?}   (búsqueda difusa por texto: "el almuerzo con María")`;
 
 const HINT =
-  '{"calls":[{"tool":string,"args":{}}]}  para pedir datos,  o  {"answer":string,"table"?:{"columns":[...],"rows":[[...]]},"chart"?:{"type":"bar"|"line","data":[{"label":string,"value":number}]}}  para responder';
+  '{"calls":[{"tool":string,"args":{}}]}  para pedir datos,  o  {"reply":string,"table"?:{"columns":[...],"rows":[[...]]},"chart"?:{"type":"bar"|"line","data":[{"label":string,"value":number}]}}  para responder';
 
 const slim = (t: TxView) => ({
   id: t.id, date: caracasIso(t.occurredAt), type: t.type, status: t.status, amount: Number(t.amount), currency: t.currency,
@@ -29,7 +31,6 @@ const slim = (t: TxView) => ({
   account: t.fromAccount?.code ?? t.toAccount?.code ?? null, note: t.note, justification: t.justification,
 });
 
-// Omniroute doesn't pass tool_calls through, so: JSON action loop, max 4 model calls.
 @Injectable()
 export class AskService {
   constructor(
@@ -47,25 +48,16 @@ export class AskService {
       content: `Eres el asistente de finanzas personales de Randy (Venezuela). Ahora: ${caracasIso(new Date())} America/Caracas (UTC-4); la semana empieza el lunes.
 Cuentas: ${accounts.map((a) => `${a.code} (${a.currency})`).join(', ')}. Categorías: ${cats.map((c) => c.path).join(' | ')}.
 ${TOOLS}
-Pide los datos con "calls" (puedes pedir varias a la vez). Las cifras salen SOLO de las herramientas, nunca inventes. Cuando tengas lo necesario responde en español, corto y cálido, con montos como "$12,30" o "1.200 Bs". Añade "table" o "chart" sólo si ayudan.
+Pide los datos con "calls" (puedes pedir varias a la vez). Las cifras salen SOLO de las herramientas, nunca inventes. Cuando tengas lo necesario responde con "reply" en español, corto y cálido, con montos como "$12,30" o "1.200 Bs". Añade "table" o "chart" sólo si ayudan.
 Pregunta: ${JSON.stringify(question)}`,
     }];
-    for (let step = 0; step < 4; step++) {
-      const r = await this.llm.json<any>(msgs, HINT, this.llm.smart, 2000);
-      const calls = Array.isArray(r?.calls) ? r.calls.slice(0, 4) : r?.tool ? [r] : [];
-      if (!calls.length || step === 3) return shape(r);
-      const results = await Promise.all(calls.map(async (c: any) => {
-        try { return { tool: c.tool, result: await this.run(String(c.tool), c.args ?? {}) }; }
-        catch (e) { return { tool: c.tool, error: (e as Error).message }; }
-      }));
-      msgs.push({ role: 'assistant', content: JSON.stringify({ calls }) });
-      msgs.push({ role: 'user', content: `Resultados: ${JSON.stringify(results).slice(0, 12000)}${step === 2 ? '\nResponde ya con "answer".' : ''}` });
-    }
-    return { answer: 'No pude responder eso ahorita 😅' };
+    const tools = Object.fromEntries(READ_TOOLS.map((t) => [t, (a: any) => this.tool(t, a)]));
+    return shape(await runAgent((m) => this.llm.json(m, HINT, this.llm.smart, 2000), msgs, tools, { maxSteps: 4, looks: READ_TOOLS }));
   }
 
-  private async run(tool: string, a: any): Promise<unknown> {
-    const d = (s: unknown) => (s ? new Date(String(s)) : undefined);
+  async tool(tool: string, a: any): Promise<unknown> {
+    // model sends local "YYYY-MM-DD[THH:mm]" without zone: that's Caracas, not the server's UTC
+    const d = (s: unknown) => { if (!s) return undefined; const v = String(s); return new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v.length === 10 ? `${v}T00:00` : v}-04:00`); };
     const range = (from: unknown, to: unknown) => ({ from: d(from) ?? new Date(0), to: d(to) ?? new Date() });
     switch (tool) {
       case 'spend_summary':
@@ -96,8 +88,8 @@ Pregunta: ${JSON.stringify(question)}`,
   }
 }
 
-function shape(r: any): AskAnswer {
-  const out: AskAnswer = { answer: typeof r?.answer === 'string' && r.answer.trim() ? r.answer.trim() : 'No encontré datos para responder eso.' };
+export function shape(r: any): AskAnswer {
+  const out: AskAnswer = { answer: typeof r?.reply === 'string' && r.reply.trim() ? r.reply.trim() : 'No encontré datos para responder eso.' };
   const t = r?.table;
   if (t && Array.isArray(t.columns) && Array.isArray(t.rows)) out.table = { columns: t.columns.map(String), rows: t.rows.filter(Array.isArray) };
   const c = r?.chart;

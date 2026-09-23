@@ -1,8 +1,9 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
-import { AskService } from '../ai/ask.service';
+import { AskAnswer, shape } from '../ai/ask.service';
+import { Tools } from '../ai/agent';
 import { EmbeddingsService } from '../ai/embeddings.service';
-import { caracasIso, normAccount, Parsed, parseAmount } from '../ai/intent';
+import { caracasIso, normAccount, normalizeIntent, Parsed, parseAmount } from '../ai/intent';
 import { IntentService } from '../ai/intent.service';
 import { TranscribeService } from '../ai/transcribe.service';
 import { BinanceService } from '../binance/binance.service';
@@ -50,7 +51,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     private auth: AuthService,
     private binance: BinanceService,
     private intent: IntentService,
-    private asker: AskService,
     private emb: EmbeddingsService,
     private transcriber: TranscribeService,
   ) {
@@ -66,16 +66,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       await this.send('Uy, algo falló 😅 Intenta de nuevo en un momento.').catch(() => {});
     });
     bot.command('start', () => safe(() => this.send('¡Hola! 👋 Cuéntame tus gastos como me los dirías a mí: «gasté 350 en pan por Mercantil». También puedes mandarme notas de voz o fotos de facturas.')));
-    bot.command('saldo', () => safe(() => this.saldo()));
-    bot.command('hoy', () => safe(() => this.summary(startOfDay(new Date()), 'hoy')));
-    bot.command('semana', () => safe(() => this.summary(startOfWeek(new Date()), 'esta semana')));
-    bot.command('mes', () => safe(() => this.summary(startOfMonth(new Date()), 'este mes')));
-    bot.command('ultimos', () => safe(() => this.ultimos()));
+    for (const [name, fn] of Object.entries(this.views)) bot.command(name, () => safe(fn));
     bot.command('deshacer', () => safe(() => this.undo(null)));
-    bot.command('pendientes', () => safe(() => this.pendientes()));
-    bot.command('conciliar', () => safe(() => this.conciliar()));
-    bot.command('panel', () => safe(() => this.panel()));
-    bot.command('sync', () => safe(async () => { await this.send('🔄 Sincronizando…'); await this.binance.syncNow(); await this.syncStatus(); }));
+    bot.command('sync', () => safe(() => this.sync()));
     bot.command('backfill', () => safe(async () => {
       await this.send('⏳ Importando historial de Binance, esto tarda un rato…');
       const r = await this.binance.backfill();
@@ -267,37 +260,62 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     this.awaiting = { kind: 'justification', txId: id, msgId: m.message_id, at: Date.now() };
   }
 
-  // ── free text pipeline ──────────────────────────────────────────────────
+  /** Screens shared by /commands and the agent's `show` tool. */
+  private views: Record<string, () => Promise<unknown>> = {
+    saldo: () => this.saldo(),
+    hoy: () => this.summary(startOfDay(new Date()), 'hoy'),
+    semana: () => this.summary(startOfWeek(new Date()), 'esta semana'),
+    mes: () => this.summary(startOfMonth(new Date()), 'este mes'),
+    ultimos: () => this.ultimos(),
+    pendientes: () => this.pendientes(),
+    conciliar: () => this.conciliar(),
+    panel: () => this.panel(),
+  };
+
+  private async sync() {
+    await this.send('🔄 Sincronizando…');
+    await this.binance.syncNow();
+    await this.syncStatus();
+  }
+
+  // ── free text: agent loop ───────────────────────────────────────────────
   async handleText(text: string, source: string) {
     await this.turn('user', text);
     const a = this.awaiting;
     this.awaiting = null;
     if (a && Date.now() - a.at < 15 * 60e3 && (await this.fill(a, text))) return;
     await this.bot!.api.sendChatAction(this.chatId, 'typing').catch(() => {});
-    let p: Parsed;
-    try { p = await this.intent.parse(text); }
+    let r: Awaited<ReturnType<IntentService['agent']>>;
+    try { r = await this.intent.agent(text, this.actions(source)); }
     catch (e) {
-      this.log.error(`parse: ${(e as Error).message}`);
+      this.log.error(`agent: ${(e as Error).message}`);
       return this.send('Uy, no pude procesar eso ahorita 😅 Intenta de nuevo en un momento.');
     }
-    if (p.sync) {
-      await this.send('🔄 Sincronizando Binance…');
-      await this.binance.syncNow().then(() => this.syncStatus(), (e) => this.send(`⚠️ No pude sincronizar: ${esc((e as Error).message)}`));
-    }
-    // Safety net: the model sometimes files "anota X…" + other orders as smalltalk. Amounts present => register them.
-    if (p.intent === 'smalltalk' && p.items.some((i) => i.amount != null))
-      p = { ...p, intent: 'add_expense' };
-    if (p.sync && p.intent === 'smalltalk') return;
-    switch (p.intent) {
-      case 'add_expense': case 'add_income': return this.addItems(p, source);
-      case 'edit': return this.editTx(p);
-      case 'undo': return this.undo(p.targetTxId);
-      case 'delete': return this.remove(p.targetTxId);
-      case 'set_balance': return this.setBalance(p.balance, false);
-      case 'answer_prompt': return this.answerPrompt(p, source);
-      case 'ask': return this.ask(text);
-      default: return this.send(esc(p.reply ?? 'Aquí estoy 🙂 Cuéntame un gasto o pregúntame algo.'));
-    }
+    if (typeof r.reply === 'string' && r.reply.trim()) return this.send(answerHtml(shape(r)));
+    if (!r.ran.length) return this.send('Aquí estoy 🙂 Cuéntame un gasto o pregúntame algo.');
+  }
+
+  /** The agent's action tools: thin wrappers over the same handlers the buttons/commands use. */
+  private actions(source: string): Tools {
+    const parse = async (raw: object) => normalizeIntent(raw, { now: new Date(), accounts: await this.ledger.balances() });
+    const ok = (p: Promise<unknown>) => p.then(() => 'ok');
+    return {
+      add_transactions: async (a) => this.addItems(await parse({ intent: 'add_expense', items: a.items, confidence: a.confidence }), source),
+      edit_transaction: async (a) => ok(this.editTx(await parse({ intent: 'edit', target_tx_id: a.id, patch: a }))),
+      void_transaction: (a) => ok(this.remove(Number(a.id) || null)),
+      undo: (a) => ok(this.undo(Number(a.id) || null)),
+      set_balance: async (a) => ok(this.setBalance((await parse({ balance: a })).balance, false)),
+      answer_prompt: async (a) => ok(this.answerPrompt(await parse({
+        intent: 'answer_prompt', items: [a], balance: a.amount != null ? { account: a.account, amount: a.amount } : null, confidence: 0.8,
+      }), source)),
+      sync_binance: () => ok(this.sync()),
+      show: async (a) => {
+        const v = this.views[String(a.view)];
+        if (!v) throw new Error(`vista desconocida: ${a.view}; usa ${Object.keys(this.views).join('|')}`);
+        await v();
+        return 'mostrado al usuario';
+      },
+    };
   }
 
   /** Consumes a typed answer to a button ("escribe el monto…"). false => not an answer, run the normal pipeline. */
@@ -334,12 +352,14 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     return true;
   }
 
+  /** Returns what was created (fed back to the agent). */
   async addItems(p: Parsed, source: string) {
-    const type = p.intent === 'add_income' ? 'income' : 'expense';
     const items = await this.intent.resolve(p.items);
-    if (!items.length) return this.send('¿Cuánto fue y en qué? 🙂');
+    if (!items.length) throw new Error('sin items');
+    const out: object[] = [];
     for (const it of items) {
-      if (it.amount == null) { await this.send(`¿Cuánto fue${it.merchant ? ` en ${esc(it.merchant)}` : ''}?`); continue; }
+      const type = it.type ?? (p.intent === 'add_income' ? 'income' : 'expense');
+      if (it.amount == null) { await this.send(`¿Cuánto fue${it.merchant ? ` en ${esc(it.merchant)}` : ''}?`); out.push({ merchant: it.merchant, error: 'falta monto, ya se lo pregunté' }); continue; }
       const tx = await this.ledger.create({
         type, status: 'pending', occurredAt: it.occurredAt, amount: it.amount, currency: it.currency ?? 'VES',
         ...(type === 'income' ? { toAccountId: it.accountId ?? undefined } : { fromAccountId: it.accountId ?? undefined }),
@@ -350,7 +370,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       if (auto) await this.ledger.confirm(tx.id);
       await this.showTx(tx.id);
       if (auto) await this.afterConfirm(tx.id);
+      out.push({ id: tx.id, type, status: auto ? 'confirmed' : 'pending', amount: it.amount, currency: it.currency, account: it.account, category: it.categoryPath });
     }
+    return out;
   }
 
   private async resolveTarget(id: number | null) {
@@ -467,18 +489,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       await this.bags.open(updated, acc.id, Number(tx.toAmount), Number(tx.toAmount) / Number(tx.amount));
     }
     return this.send(`👌 Anotado en ${esc(acc.name)}.`);
-  }
-
-  private async ask(q: string) {
-    await this.bot!.api.sendChatAction(this.chatId, 'typing').catch(() => {});
-    const r = await this.asker.ask(q);
-    let html = esc(r.answer);
-    const rows = r.table ? [r.table.columns, ...r.table.rows.slice(0, 20)].map((row) => row.map(String)) : r.chart ? r.chart.data.map((d) => [d.label, String(d.value)]) : null;
-    if (rows?.length) {
-      const w = rows[0].map((_, i) => Math.min(18, Math.max(...rows.map((row) => (row[i] ?? '').length))));
-      html += `\n\n<pre>${esc(rows.map((row) => row.map((c, i) => c.slice(0, 18).padEnd(w[i])).join('  ')).join('\n'))}</pre>`;
-    }
-    return this.send(html);
   }
 
   private async photo(fileId: string) {
@@ -629,4 +639,15 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     await this.db.setting.upsert({ where: { key: 'daily_summary' }, create: { key: 'daily_summary', value: v }, update: { value: v } });
     if (msgId) await this.edit(msgId, await this.ajustesText(), new InlineKeyboard().text(v ? '🔕 Quitar resumen diario' : '🔔 Activar resumen diario', cb('s', 'daily')));
   }
+}
+
+/** Agent/ask answer -> Telegram HTML; table (or chart as rows) as a monospace block. */
+function answerHtml(r: AskAnswer) {
+  let html = esc(r.answer);
+  const rows = r.table ? [r.table.columns, ...r.table.rows.slice(0, 20)].map((row) => row.map(String)) : r.chart ? r.chart.data.map((d) => [d.label, String(d.value)]) : null;
+  if (rows?.length) {
+    const w = rows[0].map((_, i) => Math.min(18, Math.max(...rows.map((row) => (row[i] ?? '').length))));
+    html += `\n\n<pre>${esc(rows.map((row) => row.map((c, i) => c.slice(0, 18).padEnd(w[i])).join('  ')).join('\n'))}</pre>`;
+  }
+  return html;
 }

@@ -1,9 +1,10 @@
-// Pure prompt builder + response normalizer for the one-call intent/extraction step (PLAN 3.1/3.2).
+// Pure agent prompt builder + normalizers for model-extracted items (PLAN 3.1/3.2).
 
 export const INTENTS = ['add_expense', 'add_income', 'edit', 'undo', 'delete', 'answer_prompt', 'ask', 'set_balance', 'smalltalk'] as const;
 export type Intent = (typeof INTENTS)[number];
 
 export type Item = {
+  type?: 'expense' | 'income';
   amount: number | null; currency: string | null; account: string | null; merchant: string | null;
   category: string | null; occurredAt: Date; note: string | null;
 };
@@ -27,37 +28,49 @@ export const caracasIso = (d: Date) => new Date(d.getTime() - OFF).toISOString()
 export const norm = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
-export const INTENT_SCHEMA =
-  '{"intent":"add_expense|add_income|edit|undo|delete|answer_prompt|ask|set_balance|smalltalk","items":[{"amount":number|null,"currency":"VES|USD|USDT"|null,"account":"<code>"|null,"merchant":string|null,"category":"<ruta>"|null,"occurred_at":"YYYY-MM-DDTHH:mm"|null,"note":string|null}],"target_tx_id":number|null,"patch":{...campos de item a cambiar}|null,"balance":{"account":"<code>","amount":number}|null,"confidence":0..1,"needs":[],"sync":boolean,"reply":string|null}';
+export const AGENT_HINT =
+  '{"calls":[{"tool":string,"args":{}}],"reply":string}  (calls opcional; omite "reply" si necesitas ver resultados antes de responder)';
 
-export function buildIntentPrompt(text: string, ctx: IntentCtx): string {
+const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
+- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
+- edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?}  sólo los campos que cambian
+- void_transaction {id}  anula (se recupera con undo)
+- undo {id?}  deshace el último cambio (o el de esa tx)
+- set_balance {account, amount}  concilia con el saldo real que dice el usuario
+- answer_prompt {amount?, merchant?, category?, account?}  responde al prompt pendiente del bot
+- sync_binance {}  sincroniza Binance (P2P, Pay, saldos) y muestra el estado
+- show {view:"saldo"|"ultimos"|"pendientes"|"hoy"|"semana"|"mes"|"conciliar"|"panel"}  le muestra esa vista (lista, saldos, botones)`;
+
+export function buildAgentPrompt(ctx: IntentCtx, readTools: string): string {
   const accts = ctx.accounts.map((a) => `- ${a.code} (${a.name}, ${a.currency}): ~${Math.round(a.balance * 100) / 100}`).join('\n');
-  const turns = ctx.turns.map((t) => `${t.role === 'user' ? 'Yo' : 'Bot'}: ${t.text}`).join('\n') || '(ninguno)';
-  return `Eres el parser de un bot de gastos personales en Venezuela. Ahora: ${caracasIso(ctx.now)} (America/Caracas).
+  const turns = ctx.turns.map((t) => `${t.role === 'user' ? 'Randy' : 'Bot'}: ${t.text}`).join('\n') || '(ninguno)';
+  return `Eres HousePlanBOT, el asistente de finanzas personales de Randy en Venezuela, en Telegram. Ahora: ${caracasIso(ctx.now)} (America/Caracas, UTC-4; la semana empieza el lunes).
+Trabajas con herramientas: decides qué hacer, lo haces, miras resultados si hace falta y respondes. Resuelve lo que pida de principio a fin, aunque sean varias cosas en un mensaje.
+
+${ACTIONS}
+${readTools}
+
+Cómo trabajar:
+- Cada acción ya le muestra al usuario su tarjeta o confirmación: tras actuar, reply "" salvo que haya algo nuevo que decir (no repitas "listo").
+- Nunca digas que hiciste algo que no hiciste con una herramienta. Las cifras salen SOLO de resultados o del contexto, nunca inventes.
+- "saldo", "últimos", "pendientes", "gastos de hoy/semana/mes"… → show con esa vista y reply "" (la vista ya lo dice todo).
+- Registrar gastos/ingresos → add_transactions con TODOS los items (uno por gasto, montos positivos) y reply "" o una frase corta; la tarjeta ya muestra el detalle, no lo repitas. Si falta el monto, pregúntalo en vez de registrar.
+- Una confirmación ("sí", "dale", "hazlo") de algo que el Bot propuso en los últimos turnos → ejecútalo.
+- Correcciones ("no, eran 500", "cámbialo a BDV") → edit_transaction sobre la más reciente o la que diga. Borrar → void_transaction sólo si está claro cuál; si no, pregunta.
+- Preguntas sobre sus gastos/saldos → consultas; puedes pedir varias a la vez y encadenar. Responde en español, corto y cálido, montos como "$12,30" o "1.200 Bs". Puedes añadir "table":{"columns":[...],"rows":[[...]]} si ayuda.
+- Si algo es ambiguo y equivocarse cuesta, pregunta (reply sin calls). Si es charla, responde breve y cálido.
+- Texto plano en reply, sin markdown ni HTML.
+- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil"/"lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv; si no dice cuál, account null). "efectivo" = cash_usd o cash_ves según moneda. "tarjeta", "la Binance", "spot", "funding" = binance.
+- occurred_at en hora local sin zona ("ayer", "anoche", "el lunes" relativos a ahora); null si no lo dice. merchant: el lugar o a quién se pagó tal como lo dice. category: exactamente una ruta de la lista o null.
+
 Cuentas (código, moneda, saldo estimado):
 ${accts}
 Categorías: ${ctx.categories.join(' | ')}
-
-Últimos turnos:
-${turns}
 Últimas transacciones (#id):
 ${ctx.recent.join('\n') || '(ninguna)'}
 Prompt pendiente del bot: ${ctx.pending ?? '(ninguno)'}
-
-Reglas:
-- IMPORTANTE: tú NO respondes al usuario ni ejecutas nada; sólo extraes. El bot ejecuta lo que pongas en el JSON.
-- Si el mensaje pide registrar uno o más gastos, intent=add_expense con TODOS los items, aunque también traiga otras órdenes ("sincroniza", "y luego…"). Nunca lo trates como smalltalk.
-- sync=true si pide sincronizar/actualizar Binance (puede ir junto con items; el bot sincroniza primero).
-- Si el mensaje es una confirmación ("sí", "dale", "hazlo", "ok") de gastos que el Bot mencionó en los últimos turnos y que no aparecen en Últimas transacciones, intent=add_expense con esos items.
-- intent: add_expense (gasté/pagué/compré), add_income (me pagaron/cobré), edit (corrige una tx: "no, eran 500", "cámbialo a BDV"), undo ("deshaz eso"), delete ("borra el de la gasolina"), answer_prompt (responde al prompt pendiente), ask (pregunta sobre sus gastos/saldos), set_balance ("mercantil tiene 8400"), smalltalk (sólo charla, nada que registrar; pon una respuesta corta y cálida en "reply", SIN afirmar ni prometer que hiciste o harás algo).
-- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil" y "lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv); si no dice cuál, account=null. "efectivo" = cash_usd o cash_ves según la moneda. "tarjeta", "la Binance", "spot", "funding" = binance.
-- Un mensaje puede traer varios gastos: un item por cada uno. Montos siempre positivos.
-- occurred_at en hora local sin zona; "ayer", "anoche", "el lunes" relativos a ahora. Si no dice, null.
-- merchant: el lugar o a quién se pagó, tal como lo dice ("panadería", "farmacia", "Farmatodo"), aunque sea genérico. category: exactamente una ruta de la lista; si no sabes, null.
-- edit/undo/delete: target_tx_id = #id de la lista (en edit/undo por defecto la más reciente; en delete null si no está claro cuál). En edit, "patch" sólo con los campos que cambian.
-- confidence: qué tan seguro estás de todo el registro. needs: campos que faltan (amount, account, category).
-
-Mensaje: ${JSON.stringify(text)}`;
+Conversación reciente:
+${turns}`;
 }
 
 /** "350", "1.200", "1.200,50", "1,5", "5 mil", "5k", "3 lucas", "$20" -> number */
@@ -113,6 +126,7 @@ function normItem(raw: any, codes: string[], now: Date, accountCurrency: Map<str
   const account = normAccount(raw?.account, codes, currency);
   currency ??= account ? accountCurrency.get(account) ?? null : null;
   return {
+    ...(raw?.type === 'income' || raw?.type === 'expense' ? { type: raw.type } : {}),
     amount: parseAmount(raw?.amount), currency, account, merchant: str(raw?.merchant),
     category: str(raw?.category), occurredAt: parseLocalDate(raw?.occurred_at, now), note: str(raw?.note),
   };

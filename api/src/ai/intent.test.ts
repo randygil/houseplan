@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildIntentPrompt, normalizeIntent, parseAmount, parseLocalDate, txLine } from './intent';
+import { buildAgentPrompt, normalizeIntent, parseAmount, parseLocalDate, txLine } from './intent';
 import { unfence } from './llm.service';
 
 const now = new Date('2026-09-22T14:00:00Z'); // 10:00 Caracas
@@ -70,15 +70,16 @@ test('normalizeIntent: moneda sale de la cuenta; edit con patch parcial; basura 
   assert.equal(s.confidence, 0.5);
 });
 
-test('buildIntentPrompt: contexto corto (hora local, cuentas, turnos, txs, pendiente)', () => {
+test('buildAgentPrompt: contexto corto (hora local, cuentas, turnos, txs, pendiente)', () => {
   const recent = [txLine({ id: 7, type: 'expense', status: 'confirmed', occurredAt: new Date('2026-09-22T12:30:00Z'), amount: '350', currency: 'VES', merchant: 'panadería', category: { name: 'Panadería' }, fromAccount: { code: 'mercantil' } })];
-  const s = buildIntentPrompt('no, eran 500', { now, accounts, categories: ['Comida', 'Comida › Panadería'], turns: [{ role: 'user', text: 'gasté 350 en pan' }], recent, pending: 'reconcile {"expected":9300}' });
+  const s = buildAgentPrompt({ now, accounts, categories: ['Comida', 'Comida › Panadería'], turns: [{ role: 'user', text: 'gasté 350 en pan' }], recent, pending: 'reconcile {"expected":9300}' }, 'TOOLS_DOC');
   assert.match(s, /Ahora: 2026-09-22T10:00/);
   assert.match(s, /mercantil \(Mercantil, VES\): ~8400/);
   assert.match(s, /#7 2026-09-22T08:30 expense 350 VES · panadería · Panadería · mercantil · confirmed/);
-  assert.match(s, /Yo: gasté 350 en pan/);
+  assert.match(s, /Randy: gasté 350 en pan/);
   assert.match(s, /reconcile \{"expected":9300\}/);
-  assert.match(s, /"no, eran 500"$/);
+  assert.match(s, /TOOLS_DOC/);
+  assert.match(s, /add_transactions .*show/s);
 });
 
 test('unfence: quita cercos y prosa', () => {
