@@ -19,6 +19,27 @@ export class BagsService {
     return bag;
   }
 
+  /**
+   * P2P landed in another bank than payMethodName suggested: move the SELL tx + its bag (and the pending reconcile).
+   * ponytail: expenses already drawn from the bag just lose that allocation (they keep the USD priced at this rate,
+   * which is the same P2P rate anyway); re-run allocation per tx if that ever matters.
+   */
+  async move(bagId: number, accountId: number): Promise<boolean> {
+    const bag = await this.db.bag.findUnique({ where: { id: bagId } });
+    if (!bag || bag.accountId === accountId) return false;
+    await this.db.$transaction([
+      this.db.bagAllocation.deleteMany({ where: { bagId } }),
+      this.db.bag.update({ where: { id: bagId }, data: { accountId, remainingVes: bag.amountVes, closedAt: null } }),
+    ]);
+    await this.ledger.update(bag.p2pTransactionId, { toAccountId: accountId });
+    const expected = (await this.ledger.balances()).find((b) => b.accountId === accountId)?.balance ?? null;
+    await this.db.pendingPrompt.updateMany({
+      where: { kind: 'reconcile', refId: bag.accountId, sentAt: null, cancelledAt: null, dueAt: { gte: bag.openedAt } },
+      data: { refId: accountId, payload: { expected } },
+    });
+    return true;
+  }
+
   async openBags(): Promise<(Bag & { allocatedCount: number })[]> {
     const bags = await this.db.bag.findMany({
       where: { remainingVes: { gt: 0 }, closedAt: null, muted: false },

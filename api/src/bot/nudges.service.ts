@@ -123,13 +123,9 @@ export class NudgesService implements OnModuleInit {
     let text: string;
     const k = new InlineKeyboard();
     switch (p.kind) {
-      case 'p2p_intro': {
-        const other = /bdv|venezuela/i.test(String(pl.account)) ? 'Mercantil' : 'BDV';
-        text = `💱 Cambiaste ${money(Number(pl.usdt), 'USDT')} → ${money(Number(pl.ves), 'VES')} a ${esc(String(pl.account ?? ''))} (${Number(pl.rate).toLocaleString('es-VE')}). ¿Es para algo concreto?`;
-        k.text('Gastos del día', cb('n', 'day', p.id)).text('Pagar algo puntual…', cb('n', 'one', p.id)).row()
-          .text('Solo ahorro en Bs', cb('n', 'save', p.id)).text(`Pasarlo a ${other}`, cb('n', 'move', p.id));
+      case 'p2p_intro':
+        ({ text } = p2pIntro(p.id, pl, k));
         break;
-      }
       case 'reconcile': {
         const acc = p.refId ? await this.db.account.findUnique({ where: { id: p.refId } }) : null;
         if (!acc) { await this.db.pendingPrompt.update({ where: { id: p.id }, data: { cancelledAt: now } }); return false; }
@@ -196,6 +192,14 @@ export class NudgesService implements OnModuleInit {
       case 'move':
         await this.bags.mute(p.refId!);
         return reply('👌 Listo, no te pregunto más por este cambio.');
+      case 'bank': { // payMethodName guessed the wrong bank
+        const acc = await this.ledger.accountByCode(arg!);
+        await this.bags.move(p.refId!, acc.id);
+        const payload = { ...pl, account: acc.code };
+        await this.db.pendingPrompt.update({ where: { id: p.id }, data: { payload } });
+        const k = new InlineKeyboard();
+        return msgId && this.botSvc.edit(msgId, p2pIntro(p.id, payload, k).text, k);
+      }
       // bag_followup
       case 'reg': await answer(); return this.botSvc.send('Dale 🙂 escríbeme o mándame una nota de voz: «gasté 350 en pan».');
       case 'nada': return reply('👌 Ok, te pregunto luego.');
@@ -302,4 +306,15 @@ export class NudgesService implements OnModuleInit {
       await this.emb.upsertFor('summary', weekId, `Resumen semana del ${a.toISOString().slice(0, 10)}: ${text.replace(/<[^>]+>/g, '')}`);
     } catch (e) { this.log.error(e); }
   }
+}
+
+/** p2p_intro text + buttons. The bank is a guess from the ad's payMethodName, so the other bank is one tap away. */
+function p2pIntro(pid: number, pl: Record<string, any>, k: InlineKeyboard) {
+  const isBdv = /bdv/i.test(String(pl.account));
+  const [bank, other, otherCode] = isBdv ? ['BDV', 'Mercantil', 'mercantil'] : ['Mercantil', 'BDV', 'bdv'];
+  const text = `💱 Cambiaste ${money(Number(pl.usdt), 'USDT')} → ${money(Number(pl.ves), 'VES')} a <b>${bank}</b> (${Number(pl.rate).toLocaleString('es-VE')}). ¿Es para algo concreto?`;
+  k.text('Gastos del día', cb('n', 'day', pid)).text('Pagar algo puntual…', cb('n', 'one', pid)).row()
+    .text('Solo ahorro en Bs', cb('n', 'save', pid)).text(`Pasarlo a ${other}`, cb('n', 'move', pid)).row()
+    .text(`🏦 No, llegó a ${other}`, cb('n', 'bank', pid, otherCode));
+  return { text };
 }

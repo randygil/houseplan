@@ -392,17 +392,24 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (q.merchant) patch.merchant = q.merchant;
     if (q.note) patch.note = q.note;
     if (q.occurredAt) patch.occurredAt = q.occurredAt;
+    let moved = false;
     if (q.account) {
       const acc = await this.ledger.accountByCode(q.account).catch(() => null);
-      if (acc) {
-        if (tx.type === 'income') patch.toAccountId = acc.id; else patch.fromAccountId = acc.id;
-        if (!q.currency && tx.currency !== acc.currency) patch.currency = acc.currency;
+      const bag = acc && tx.type === 'transfer' ? await this.db.bag.findUnique({ where: { p2pTransactionId: id } }) : null;
+      if (bag) { // P2P SELL to the wrong bank: move tx + bag together
+        moved = await this.bags.move(bag.id, acc!.id);
+      } else if (acc) {
+        // transfer: replace the bank side, never the Binance side
+        const toSide = tx.type === 'income' || (tx.type === 'transfer' && tx.fromAccount?.code === 'binance');
+        if (toSide) patch.toAccountId = acc.id; else patch.fromAccountId = acc.id;
+        if (!q.currency && tx.currency !== acc.currency && !(tx.type === 'transfer' && toSide)) patch.currency = acc.currency; // amount is the from side
       }
     }
     if (q.category) {
       const c = await this.cats.byPath(q.category);
       if (c) patch.categoryId = c.id;
     }
+    if (!Object.keys(patch).length && moved) return this.showTx(id, { prefix: '✏️ Listo, lo moví de banco:' });
     if (!Object.keys(patch).length) return this.showTx(id, { mode: 'edit', prefix: 'No entendí el cambio, ¿cuál campo?' });
     await this.ledger.update(id, patch);
     await this.showTx(id, { prefix: '✏️ Listo, lo cambié:' });

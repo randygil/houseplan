@@ -16,20 +16,21 @@ const ledger = new LedgerService(db, fx, new CategoriesService(db), bags);
 
 const T0 = new Date('2001-01-01T12:00:00Z'); // far past: isolates fx_rates rows
 const h = (n: number) => new Date(+T0 + n * 3600_000);
-let acct: { id: number }, usdt: { id: number };
+let acct: { id: number }, usdt: { id: number }, acct2: { id: number };
 
 before(async () => {
   acct = await db.account.create({ data: { code: `test_ves_${Date.now()}`, name: 't', currency: 'VES', kind: 'ledger', openingAt: h(-24) } });
+  acct2 = await db.account.create({ data: { code: `test_ves2_${Date.now()}`, name: 't2', currency: 'VES', kind: 'ledger', openingAt: h(-24) } });
   usdt = await db.account.create({ data: { code: `test_usdt_${Date.now()}`, name: 't', currency: 'USDT', kind: 'ledger', openingAt: h(-24) } });
 });
 
 after(async () => {
-  const ids = [acct.id, usdt.id];
+  const ids = [acct.id, acct2.id, usdt.id];
   const txs = await db.transaction.findMany({ where: { OR: [{ fromAccountId: { in: ids } }, { toAccountId: { in: ids } }] } });
   const txIds = txs.map((t) => t.id);
   await db.bagAllocation.deleteMany({ where: { transactionId: { in: txIds } } });
   await db.transactionVersion.deleteMany({ where: { transactionId: { in: txIds } } });
-  await db.bag.deleteMany({ where: { accountId: acct.id } });
+  await db.bag.deleteMany({ where: { accountId: { in: ids } } });
   await db.transaction.deleteMany({ where: { id: { in: txIds } } });
   await db.account.deleteMany({ where: { id: { in: ids } } });
   await db.fxRate.deleteMany({ where: { date: new Date('2001-01-01') } });
@@ -73,4 +74,23 @@ test('FIFO allocation, release on void/edit, undo', async () => {
 
   const bal = (await ledger.balances()).find((x) => x.accountId === acct.id)!;
   assert.equal(bal.balance, 2000);
+});
+
+test('move: P2P landed in the other bank -> tx, bag and allocations follow', async () => {
+  const bal = async (id: number) => (await ledger.balances()).find((x) => x.accountId === id)!.balance;
+  const p2p = await ledger.create({ type: 'transfer', occurredAt: h(10), amount: 10, currency: 'USDT', toAmount: 1000, fromAccountId: usdt.id, toAccountId: acct2.id, source: 'test' });
+  const bag = await bags.open(p2p, acct2.id, 1000, 100);
+  const e = await ledger.create({ type: 'expense', occurredAt: h(11), amount: 300, currency: 'VES', fromAccountId: acct2.id, source: 'manual_text' });
+  assert.equal(e.bagId, bag.id);
+  const [b1, b2] = [await bal(acct.id), await bal(acct2.id)];
+
+  assert.equal(await bags.move(bag.id, acct.id), true);
+  const moved = await db.bag.findUniqueOrThrow({ where: { id: bag.id } });
+  assert.equal(moved.accountId, acct.id);
+  assert.equal(Number(moved.remainingVes), 1000); // the other bank's expense no longer drains it
+  assert.equal((await ledger.get(p2p.id))!.toAccountId, acct.id);
+  assert.equal(Number((await ledger.get(p2p.id))!.amountUsd), 10);
+  assert.equal(await bal(acct.id), b1 + 1000);
+  assert.equal(await bal(acct2.id), b2 - 1000);
+  assert.equal(await bags.move(bag.id, acct.id), false); // no-op
 });
