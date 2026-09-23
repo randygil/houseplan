@@ -159,10 +159,13 @@ function Row({ t, first, onTap }: { t: TxView; first: boolean; onTap: () => void
   )
 }
 
+// ISO -> "YYYY-MM-DDTHH:mm" in local time, the format <input type="datetime-local"> wants
+const toLocalInput = (iso: string) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16) }
+
 function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   tx: TxView | null; onClose: () => void; cats: Category[]; accounts: Account[]; onSaved: (t: Transaction | null, old: TxView) => void
 }) {
-  const [v, setV] = useState({ amount: '', categoryId: '', accountId: '', merchant: '', note: '', justification: '' })
+  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', justification: '' })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const accKey = tx?.type === 'income' ? 'toAccountId' : 'fromAccountId'
@@ -171,7 +174,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     if (!tx) return
     setMsg(null)
     setV({
-      amount: String(num(tx.amount)), categoryId: tx.categoryId ? String(tx.categoryId) : '',
+      amount: String(num(tx.amount)), date: toLocalInput(tx.occurredAt), categoryId: tx.categoryId ? String(tx.categoryId) : '',
       accountId: String((accKey === 'toAccountId' ? tx.toAccountId : tx.fromAccountId) ?? ''),
       merchant: tx.merchant ?? '', note: tx.note ?? '', justification: tx.justification ?? '',
     })
@@ -185,6 +188,8 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   }
   const save = () => run(() => api.patchTx(tx.id, {
     amount: parseNum(v.amount),
+    // only send when touched: minute-precision input would otherwise re-run FX on every save
+    occurredAt: v.date && v.date !== toLocalInput(tx.occurredAt) ? new Date(v.date).toISOString() : undefined,
     categoryId: v.categoryId ? +v.categoryId : undefined,
     [accKey]: v.accountId ? +v.accountId : undefined,
     merchant: v.merchant || undefined, note: v.note || undefined, justification: v.justification || undefined,
@@ -219,6 +224,9 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
             </select>
           </Field>
         </div>
+        <Field label="Fecha">
+          <input type="datetime-local" value={v.date} onChange={(e) => setV({ ...v, date: e.target.value })} className={inputCls} />
+        </Field>
         {tx.type !== 'transfer' && (
           <Field label="Categoría">
             <select value={v.categoryId} onChange={(e) => setV({ ...v, categoryId: e.target.value })} className={inputCls}>
