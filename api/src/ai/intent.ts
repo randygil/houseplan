@@ -60,7 +60,8 @@ Cómo trabajar:
 - Preguntas sobre sus gastos/saldos → consultas; puedes pedir varias a la vez y encadenar. Responde en español, corto y cálido, montos como "$12,30" o "1.200 Bs". Puedes añadir "table":{"columns":[...],"rows":[[...]]} si ayuda.
 - Si algo es ambiguo y equivocarse cuesta, pregunta (reply sin calls). Si es charla, responde breve y cálido.
 - Texto plano en reply, sin markdown ni HTML.
-- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil"/"lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv; si no dice cuál, account null). "efectivo" = cash_usd o cash_ves según moneda. "tarjeta", "la Binance", "spot", "funding" = binance.
+- Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil"/"lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv; si no dice cuál, account null). "efectivo" = cash_usd o cash_ves según moneda. "Venezuela", "Banco de Venezuela", "el Venezuela" = bdv. "tarjeta" (sola), "la Binance", "spot", "funding" = binance.
+- "Tarjeta de crédito" NO es una cuenta: pagarla/abonarla/una cuota es saldar deuda → expense con category "Deudas › Tarjeta de crédito" (otras deudas → "Deudas"), account = de dónde salió el dinero, merchant = el banco emisor si lo dice.
 - occurred_at en hora local sin zona ("ayer", "anoche", "el lunes" relativos a ahora); null si no lo dice. merchant: el lugar o a quién se pagó tal como lo dice. category: exactamente una ruta de la lista o null.
 
 Cuentas (código, moneda, saldo estimado):
@@ -106,7 +107,7 @@ export function normAccount(a: unknown, codes: string[], currency: string | null
   const pick = (c: string) => (codes.includes(c) ? c : null);
   if (/mercantil/.test(t)) return pick('mercantil');
   if (/bdv|venezuela/.test(t)) return pick('bdv');
-  if (/binance|funding|spot|tarjeta|card/.test(t)) return pick('binance');
+  if (/binance|funding|spot|card/.test(t) || (/tarjeta/.test(t) && !/credito/.test(t))) return pick('binance');
   if (/efectivo|cash/.test(t)) return pick(currency === 'VES' ? 'cash_ves' : 'cash_usd');
   return null;
 }

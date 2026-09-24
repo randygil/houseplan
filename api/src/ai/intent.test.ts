@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildAgentPrompt, normalizeIntent, parseAmount, parseLocalDate, txLine } from './intent';
+import { buildAgentPrompt, normAccount, normalizeIntent, parseAmount, parseLocalDate, txLine } from './intent';
 import { unfence } from './llm.service';
 
 const now = new Date('2026-09-22T14:00:00Z'); // 10:00 Caracas
@@ -90,4 +90,11 @@ test('unfence: quita cercos y prosa', () => {
 test('sync flag only when explicitly true', () => {
   assert.equal(normalizeIntent({ intent: 'add_expense', items: [], sync: true }, { now, accounts }).sync, true);
   assert.equal(normalizeIntent({ intent: 'add_expense', items: [], sync: 'yes' }, { now, accounts }).sync, false);
+});
+
+test('normAccount: "cuenta en Venezuela" = bdv; tarjeta de crédito no es Binance', () => {
+  const codes = ['binance', 'mercantil', 'bdv', 'cash_usd', 'cash_ves'];
+  assert.equal(normAccount('mi cuenta en Venezuela', codes, 'VES'), 'bdv');
+  assert.equal(normAccount('tarjeta', codes, null), 'binance');
+  assert.equal(normAccount('tarjeta de crédito', codes, 'VES'), null);
 });

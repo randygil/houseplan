@@ -20,7 +20,7 @@ const tree: [string, string, [string, string][]?][] = [
   ['Transporte', '🚗', [['Gasolina', '⛽'], ['Taxi-Ridery', '🚕'], ['Mantenimiento', '🔧']]],
   ['Casa', '🏠', [['Servicios', '💡'], ['Condominio', '🏢'], ['Internet', '🌐']]],
   ['Salud', '💊'], ['Personal', '🧴'], ['Ocio', '🎉'], ['Suscripciones', '📺'], ['Educación', '📚'],
-  ['Regalos', '🎁'], ['Comisiones', '🏦'], ['Préstamos', '🤝'], ['Otros', '📦'],
+  ['Regalos', '🎁'], ['Comisiones', '🏦'], ['Préstamos', '🤝'], ['Deudas', '💳', [['Tarjeta de crédito', '💳']]], ['Otros', '📦'],
 ];
 
 async function cat(name: string, emoji: string, parentId: number | null) {
