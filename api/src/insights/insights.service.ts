@@ -11,6 +11,7 @@ type Group = 'category' | 'account' | 'merchant' | 'day';
 type Row = { key: string; label: string; total: number; count: number };
 
 const SPEND = Prisma.sql`t.type IN ('expense','fee') AND t.status <> 'void'`;
+const justifyOver = () => Number(process.env.JUSTIFY_OVER_USD ?? 20);
 
 @Injectable()
 export class InsightsService {
@@ -56,15 +57,19 @@ export class InsightsService {
     type?: string; status?: string; limit?: number; cursor?: number;
   }): Promise<{ items: TxView[]; nextCursor: number | null }> {
     const take = Math.min(q.limit ?? 50, 500);
+    // 'tojustify' = same rule as overview().toJustify (any status, not only pending)
+    const tj = q.status === 'tojustify';
     const where: Prisma.TransactionWhereInput = {
-      status: q.status ?? { not: 'void' },
-      type: q.type,
+      status: tj || !q.status ? { not: 'void' } : q.status,
+      type: q.type ?? (tj ? { in: ['expense', 'fee'] } : undefined),
+      ...(tj && { justified: false }),
       ...((q.from || q.to) && { occurredAt: { gte: q.from, lte: q.to } }),
       ...((q.min != null || q.max != null) && { amountUsd: { gte: q.min, lte: q.max } }),
       merchant: q.merchant ? { contains: q.merchant, mode: 'insensitive' } : undefined,
       AND: [
         q.accountId ? { OR: [{ fromAccountId: q.accountId }, { toAccountId: q.accountId }] } : {},
         q.categoryId ? { OR: [{ categoryId: q.categoryId }, { category: { parentId: q.categoryId } }] } : {},
+        tj ? { OR: [{ amountUsd: { gt: justifyOver() } }, { category: { name: 'Otros' } }] } : {},
         q.text ? { OR: (['merchant', 'note', 'justification'] as const).map((f) => ({ [f]: { contains: q.text, mode: 'insensitive' } })) } : {},
       ],
     };
@@ -100,7 +105,6 @@ export class InsightsService {
   }
 
   async overview() {
-    const justifyOver = Number(process.env.JUSTIFY_OVER_USD ?? 20);
     const day = Prisma.sql`date_trunc('day', now() AT TIME ZONE ${TZ})`;
     const at = (p: Prisma.Sql) => Prisma.sql`((${p}) AT TIME ZONE ${TZ})`;
     const [[s], balances, bcv, p2p, market, spark] = await Promise.all([
@@ -111,7 +115,7 @@ export class InsightsService {
           coalesce(sum(t."amountUsd") FILTER (WHERE t."occurredAt" >= ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ})`)}), 0) AS month,
           coalesce(sum(t."amountUsd") FILTER (WHERE t."occurredAt" >= ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ}) - interval '1 month'`)}
                                               AND t."occurredAt" < ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ})`)}), 0) AS "lastMonth",
-          count(*) FILTER (WHERE NOT t.justified AND (t."amountUsd" > ${justifyOver} OR c.name = 'Otros')) AS "toJustify"
+          count(*) FILTER (WHERE NOT t.justified AND (t."amountUsd" > ${justifyOver()} OR c.name = 'Otros')) AS "toJustify"
         FROM transactions t LEFT JOIN categories c ON c.id = t."categoryId"
         WHERE ${SPEND}`,
       this.ledger.balances(),

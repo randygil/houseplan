@@ -4,7 +4,7 @@ import { Field, SOURCE_BADGE, SOURCE_LABEL, Sheet, btnCls, daysAgo, fmtCur, fmtD
 
 const RANGES: [string, string, number | null][] = [['7', '7 días', 7], ['30', '30 días', 30], ['90', '90 días', 90], ['all', 'Todo', null]]
 const TYPES: [string, string][] = [['', 'Tipo'], ['expense', 'Gasto'], ['income', 'Ingreso'], ['transfer', 'Transferencia'], ['fee', 'Comisión']]
-const STATUSES: [string, string][] = [['', 'Estado'], ['pending', 'Pendiente'], ['confirmed', 'Confirmado'], ['void', 'Anulado']]
+const STATUSES: [string, string][] = [['', 'Estado'], ['pending', 'Pendiente'], ['tojustify', 'Por justificar'], ['confirmed', 'Confirmado'], ['void', 'Anulado']]
 
 const accOf = (b: Balance): Account => ({ id: b.accountId, code: b.code, name: b.name, currency: b.currency, kind: b.kind })
 

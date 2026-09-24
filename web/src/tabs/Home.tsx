@@ -20,7 +20,7 @@ export default function Home({ go }: { go: Go }) {
         {(o.toJustify > 0 || o.pending > 0) && (
           <div className="mt-3 flex flex-wrap gap-2">
             {o.toJustify > 0 && (
-              <button onClick={() => go('movimientos', { status: 'pending' })}
+              <button onClick={() => go('movimientos', { status: 'tojustify' })}
                 className="rounded-full bg-warn-bg px-3 py-1.5 text-[13px] font-semibold text-warn">⚠️ {o.toJustify} por justificar</button>
             )}
             {o.pending > 0 && (
