@@ -1,5 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../db/prisma.service';
 
 export const SESSION_COOKIE = 'plata_session';
@@ -24,6 +24,13 @@ export function validateInitData(initData: string, botToken: string, allowedId: 
   }
 }
 
+/** Constant-time compare via sha256 so length doesn't leak. Empty expected = login disabled. */
+export function checkPassword(given: unknown, expected: string | undefined): boolean {
+  if (!expected || typeof given !== 'string') return false;
+  const h = (x: string) => createHash('sha256').update(x).digest();
+  return timingSafeEqual(h(given), h(expected));
+}
+
 export const readCookie = (header: string | undefined, name: string) =>
   header?.split(';').map((c) => c.trim().split('=')).find(([k]) => k === name)?.[1];
 
@@ -42,6 +49,10 @@ export class AuthService {
   async redeemMagic(token: string): Promise<string | null> {
     const { count } = await this.db.webSession.deleteMany({ where: { token: `m:${token}`, expiresAt: { gt: new Date() } } });
     if (!count) return null;
+    return this.createSession();
+  }
+
+  async createSession(): Promise<string> {
     const session = randomBytes(32).toString('base64url');
     await this.db.webSession.create({ data: { token: `s:${session}`, expiresAt: new Date(Date.now() + SESSION_DAYS * 86400_000) } });
     await this.db.webSession.deleteMany({ where: { expiresAt: { lt: new Date() } } });

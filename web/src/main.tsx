@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from 'react'
+import { StrictMode, useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { initData, type TxQuery } from './api'
@@ -38,6 +38,29 @@ const TABS = [
 type Tab = (typeof TABS)[number]['id']
 const tabFromHash = (): Tab => (TABS.find((t) => '#' + t.id === location.hash)?.id ?? 'inicio')
 
+function Login({ onOk }: { onOk: () => void }) {
+  const [pw, setPw] = useState('')
+  const [err, setErr] = useState('')
+  const submit = async (e: FormEvent) => {
+    e.preventDefault(); setErr('')
+    // raw fetch: api req() would re-fire plata:401 on a wrong password
+    const r = await fetch('/api/auth/login', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+    if (r.ok) return onOk()
+    setErr(r.status === 429 ? 'Demasiados intentos, espera 15 min' : 'Clave incorrecta')
+  }
+  return (
+    <form onSubmit={submit} className="mx-auto flex min-h-dvh max-w-xs flex-col items-center justify-center gap-3 px-8 text-center">
+      <div className="text-5xl">🔒</div>
+      <h1 className="text-xl font-semibold">Entrar</h1>
+      <input type="password" autoFocus autoComplete="current-password" aria-label="Clave" placeholder="Clave" value={pw} onChange={(e) => setPw(e.target.value)}
+        className="w-full rounded-xl border border-line bg-card px-4 py-3 text-fg" />
+      <button disabled={!pw} className="w-full rounded-xl bg-accent px-4 py-3 font-semibold text-accent-fg disabled:opacity-50">Entrar</button>
+      {err && <p role="alert" className="text-sm text-red-500">{err}</p>}
+      <p className="text-sm text-muted">o abre <b className="text-fg">/panel</b> en el bot de Telegram</p>
+    </form>
+  )
+}
+
 function App() {
   const [tab, setTab] = useState<Tab>(tabFromHash)
   const [preset, setPreset] = useState<TxQuery>({})
@@ -52,14 +75,7 @@ function App() {
   }, [])
   const go = (t: Tab, q: TxQuery = {}) => { setPreset(q); location.hash = t; window.scrollTo(0, 0) }
 
-  if (unauth)
-    return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 px-8 text-center">
-        <div className="text-5xl">🔒</div>
-        <h1 className="text-xl font-semibold">Sesión no válida</h1>
-        <p className="text-muted">Abre <b className="text-fg">/panel</b> en el bot de Telegram para entrar.</p>
-      </div>
-    )
+  if (unauth) return <Login onOk={() => location.reload()} />
 
   const current = TABS.find((t) => t.id === tab)!
   return (

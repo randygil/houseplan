@@ -26,6 +26,7 @@ services:
       TG_ALLOWED_ID: ${TG_ALLOWED_ID:?set TG_ALLOWED_ID}
       TG_WEBHOOK_SECRET: ${TG_WEBHOOK_SECRET:?set TG_WEBHOOK_SECRET}
       TG_POLLING: ${TG_POLLING:-0}
+      WEB_PASSWORD: ${WEB_PASSWORD:-}
       OMNI_URL: ${OMNI_URL:-https://omniroute.randygil.com/v1/chat/completions}
       OMNI_KEY: ${OMNI_KEY:?set OMNI_KEY}
       OMNI_MODEL: ${OMNI_MODEL:-antigravity/gemini-2.5-flash}

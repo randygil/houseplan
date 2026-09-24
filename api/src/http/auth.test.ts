@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
-import { readCookie, validateInitData } from './auth.service';
+import { checkPassword, readCookie, validateInitData } from './auth.service';
 
 const TOKEN = '123456:ABC-test';
 function sign(fields: Record<string, string>, token = TOKEN) {
@@ -19,3 +19,10 @@ test('bad signature / other bot', () => assert.equal(validateInitData(sign(field
 test('tampered', () => assert.equal(validateInitData(sign(fields()).replace('Randy', 'Eve'), TOKEN, '42', now), false));
 test('no hash', () => assert.equal(validateInitData('user=%7B%7D', TOKEN, '42', now), false));
 test('readCookie', () => assert.equal(readCookie('a=1; plata_session=xyz; b=2', 'plata_session'), 'xyz'));
+test('checkPassword', () => {
+  assert.equal(checkPassword('s3cret', 's3cret'), true);
+  assert.equal(checkPassword('nope', 's3cret'), false);
+  assert.equal(checkPassword('', ''), false); // unset env = disabled
+  assert.equal(checkPassword(undefined, 's3cret'), false);
+  assert.equal(checkPassword(123, '123'), false);
+});
