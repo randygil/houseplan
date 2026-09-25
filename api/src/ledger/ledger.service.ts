@@ -188,7 +188,13 @@ export class LedgerService {
     if (isUsd(currency)) return { ...out, amountUsd: amount };
     if (input.fxRate) return { ...out, amountUsd: amount / input.fxRate, fxRate: input.fxRate, fxSource: input.fxSource ?? 'manual' };
     const to = input.toAmount && row.toAccountId ? await db.account.findUnique({ where: { id: row.toAccountId } }) : null;
-    if (to && isUsd(to.currency)) return { ...out, amountUsd: input.toAmount!, fxRate: amount / input.toAmount!, fxSource: 'p2p' };
+    if (to && isUsd(to.currency)) {
+      // Bs leaving for a USD account (P2P BUY, cambio a Zelle) drain that bank's bags like an expense would.
+      // ponytail: VES→VES moves (bdv→mercantil) leave bags where they were; move them if follow-ups nag about it.
+      const bagId = currency === 'VES' && row.fromAccountId
+        ? (await this.bags.allocate(db, { id: row.id, fromAccountId: row.fromAccountId, amount, occurredAt: input.occurredAt ?? row.occurredAt }, preferBagId)).bagId : null;
+      return { ...out, amountUsd: input.toAmount!, fxRate: amount / input.toAmount!, fxSource: 'p2p', bagId };
+    }
 
     const type = input.type ?? row.type;
     let covered = 0, usd = 0;

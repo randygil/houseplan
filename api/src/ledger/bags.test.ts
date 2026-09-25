@@ -16,16 +16,17 @@ const ledger = new LedgerService(db, fx, new CategoriesService(db), bags);
 
 const T0 = new Date('2001-01-01T12:00:00Z'); // far past: isolates fx_rates rows
 const h = (n: number) => new Date(+T0 + n * 3600_000);
-let acct: { id: number }, usdt: { id: number }, acct2: { id: number };
+let acct: { id: number }, usdt: { id: number }, acct2: { id: number }, usd: { id: number };
 
 before(async () => {
   acct = await db.account.create({ data: { code: `test_ves_${Date.now()}`, name: 't', currency: 'VES', kind: 'ledger', openingAt: h(-24) } });
   acct2 = await db.account.create({ data: { code: `test_ves2_${Date.now()}`, name: 't2', currency: 'VES', kind: 'ledger', openingAt: h(-24) } });
+  usd = await db.account.create({ data: { code: `test_usd_${Date.now()}`, name: 'z', currency: 'USD', kind: 'ledger', openingAt: h(-24) } });
   usdt = await db.account.create({ data: { code: `test_usdt_${Date.now()}`, name: 't', currency: 'USDT', kind: 'ledger', openingAt: h(-24) } });
 });
 
 after(async () => {
-  const ids = [acct.id, acct2.id, usdt.id];
+  const ids = [acct.id, acct2.id, usdt.id, usd.id];
   const txs = await db.transaction.findMany({ where: { OR: [{ fromAccountId: { in: ids } }, { toAccountId: { in: ids } }] } });
   const txIds = txs.map((t) => t.id);
   await db.bagAllocation.deleteMany({ where: { transactionId: { in: txIds } } });
@@ -93,4 +94,15 @@ test('move: P2P landed in the other bank -> tx, bag and allocations follow', asy
   assert.equal(await bal(acct.id), b1 + 1000);
   assert.equal(await bal(acct2.id), b2 - 1000);
   assert.equal(await bags.move(bag.id, acct.id), false); // no-op
+});
+
+test('cambio Bs -> cuenta USD (Zelle): priced by what landed, drains the bank\'s bags', async () => {
+  const p2p = await ledger.create({ type: 'transfer', occurredAt: h(20), amount: 10, currency: 'USDT', toAmount: 2000, fromAccountId: usdt.id, toAccountId: acct2.id, source: 'test' });
+  const bag = await bags.open(p2p, acct2.id, 2000, 200);
+  const t = await ledger.create({ type: 'transfer', occurredAt: h(21), amount: 1500, currency: 'VES', toAmount: 5, fromAccountId: acct2.id, toAccountId: usd.id, source: 'test' });
+  assert.equal(Number(t.amountUsd), 5);
+  assert.equal(t.bagId, bag.id);
+  assert.equal(Number((await db.bag.findUniqueOrThrow({ where: { id: bag.id } })).remainingVes), 500);
+  await ledger.void(t.id);
+  assert.equal(Number((await db.bag.findUniqueOrThrow({ where: { id: bag.id } })).remainingVes), 2000);
 });

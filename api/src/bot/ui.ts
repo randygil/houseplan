@@ -52,16 +52,16 @@ export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 export type CardTx = {
   id: number; type: string; status: string; amount: unknown; currency: string; amountUsd: unknown; fxRate: unknown;
   fxSource: string | null; merchant: string | null; note: string | null; justification: string | null; occurredAt: Date;
-  category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string } | null;
+  category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string; currency?: string } | null; toAmount?: unknown;
 };
 
-const FX_LABEL: Record<string, string> = { bag: 'de tu cambio', p2p_avg: 'P2P prom.', market: 'P2P mercado', bcv: 'BCV', manual: 'manual' };
+const FX_LABEL: Record<string, string> = { bag: 'de tu cambio', p2p: 'del cambio', p2p_avg: 'P2P prom.', market: 'P2P mercado', bcv: 'BCV', manual: 'manual' };
 
 /** Tx card (HTML). `catPath` = "Comida › Panadería" when known. */
 export function txCard(t: CardTx, catPath?: string | null, now = new Date()): string {
   const amount = Number(t.amount);
   const emoji = t.category?.emoji ?? (t.type === 'income' ? '💰' : t.type === 'transfer' ? '🔁' : '🧾');
-  const title = t.merchant || t.category?.name || (t.type === 'income' ? 'Ingreso' : 'Gasto');
+  const title = t.merchant || t.category?.name || (t.type === 'income' ? 'Ingreso' : t.type === 'transfer' ? 'Transferencia' : 'Gasto');
   let line = `${emoji} <b>${esc(title)}</b> · ${money(amount, t.currency)}`;
   if (t.currency !== 'USD' && t.amountUsd != null) {
     const fx = t.currency === 'VES' && t.fxRate != null ? ` · tasa ${nf(Number(t.fxRate), 2)}${t.fxSource ? ` ${FX_LABEL[t.fxSource] ?? t.fxSource}` : ''}` : '';
@@ -69,6 +69,10 @@ export function txCard(t: CardTx, catPath?: string | null, now = new Date()): st
   }
   const acct = (t.type === 'income' ? t.toAccount : t.fromAccount ?? t.toAccount)?.name;
   const rows = [line, `Cuenta: ${acct ? esc(acct) : '❓'}   Categoría: ${catPath ? esc(catPath) : t.category ? esc(t.category.name) : '❓'}`];
+  if (t.type === 'transfer') {
+    const got = t.toAmount != null && t.toAccount?.currency ? ` (llegaron ${money(Number(t.toAmount), t.toAccount.currency)})` : '';
+    rows[1] = `${esc(t.fromAccount?.name ?? '❓')} → ${esc(t.toAccount?.name ?? '❓')}${got}`;
+  }
   const day = dayLabel(t.occurredAt, now).replace(/^de (esta mañana|hoy)$/, 'hoy').replace(/^del? /, '');
   rows.push(`🕒 ${day} ${hhmm(t.occurredAt)}`);
   if (t.note) rows.push(`📝 ${esc(t.note)}`);

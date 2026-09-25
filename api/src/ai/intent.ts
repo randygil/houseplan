@@ -33,6 +33,7 @@ export const AGENT_HINT =
 
 const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
 - add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
+- add_transfer {from:"<code>", to:"<code>", amount, to_amount?, occurred_at?, note?}  mueve dinero entre cuentas propias (no es gasto). amount en la moneda de "from"; si "to" tiene otra moneda es un cambio y to_amount es lo que llegó
 - edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?}  sólo los campos que cambian
 - void_transaction {id}  anula (se recupera con undo)
 - undo {id?}  deshace el último cambio (o el de esa tx)
@@ -56,6 +57,7 @@ Cómo trabajar:
 - "saldo", "últimos", "pendientes", "gastos de hoy/semana/mes"… → show con esa vista y reply "" (la vista ya lo dice todo).
 - Registrar gastos/ingresos → add_transactions con TODOS los items (uno por gasto, montos positivos) y reply "" o una frase corta; la tarjeta ya muestra el detalle, no lo repitas. Si falta el monto, pregúntalo en vez de registrar.
 - Una confirmación ("sí", "dale", "hazlo") de algo que el Bot propuso en los últimos turnos → ejecútalo.
+- Mover/pasar/cambiar dinero entre sus cuentas ("pasé 120 del bdv al zelle", "cambié 8 mil bs por 20 verdes en efectivo") → add_transfer. Nunca digas que no se puede: cómo lo hizo es cosa de Randy (va en note, ej. "Cambio personal"). Entre monedas distintas hacen falta los dos montos (lo que salió y lo que llegó); si falta uno pregúntalo antes de registrar.
 - Correcciones ("no, eran 500", "cámbialo a BDV") → edit_transaction sobre la más reciente o la que diga. Borrar → void_transaction sólo si está claro cuál; si no, pregunta.
 - Preguntas sobre sus gastos/saldos → consultas; puedes pedir varias a la vez y encadenar. Responde en español, corto y cálido, montos como "$12,30" o "1.200 Bs". Puedes añadir "table":{"columns":[...],"rows":[[...]]} si ayuda.
 - Si algo es ambiguo y equivocarse cuesta, pregunta (reply sin calls). Si es charla, responde breve y cálido.

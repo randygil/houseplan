@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import { AskAnswer, shape } from '../ai/ask.service';
 import { Tools } from '../ai/agent';
 import { EmbeddingsService } from '../ai/embeddings.service';
-import { caracasIso, normAccount, normalizeIntent, Parsed, parseAmount } from '../ai/intent';
+import { caracasIso, normAccount, normalizeIntent, Parsed, parseAmount, parseLocalDate } from '../ai/intent';
 import { IntentService } from '../ai/intent.service';
 import { TranscribeService } from '../ai/transcribe.service';
 import { BinanceService } from '../binance/binance.service';
@@ -301,6 +301,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     const ok = (p: Promise<unknown>) => p.then(() => 'ok');
     return {
       add_transactions: async (a) => this.addItems(await parse({ intent: 'add_expense', items: a.items, confidence: a.confidence }), source),
+      add_transfer: (a) => this.addTransfer(a, source),
       edit_transaction: async (a) => ok(this.editTx(await parse({ intent: 'edit', target_tx_id: a.id, patch: a }))),
       void_transaction: (a) => ok(this.remove(Number(a.id) || null)),
       undo: (a) => ok(this.undo(Number(a.id) || null)),
@@ -373,6 +374,26 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       out.push({ id: tx.id, type, status: auto ? 'confirmed' : 'pending', amount: it.amount, currency: it.currency, account: it.account, category: it.categoryPath });
     }
     return out;
+  }
+
+  /** Own-account move; different currencies = an exchange (amount out, toAmount in), priced by what landed. */
+  async addTransfer(a: any, source: string) {
+    const accs = await this.ledger.balances();
+    const codes = accs.map((x) => x.code);
+    const find = (v: unknown) => accs.find((x) => x.code === normAccount(v, codes, null));
+    const from = find(a.from), to = find(a.to);
+    if (!from || !to || from.accountId === to.accountId) throw new Error(`cuentas inválidas: from/to deben ser dos de ${codes.join(', ')}`);
+    const amount = parseAmount(a.amount), cross = from.currency !== to.currency;
+    const toAmount = cross ? parseAmount(a.to_amount) : null;
+    if (amount == null) throw new Error(`falta amount (${from.currency} que salieron de ${from.code}): pregúntalo`);
+    if (cross && toAmount == null) throw new Error(`falta to_amount (${to.currency} que llegaron a ${to.code}): pregúntalo`);
+    const tx = await this.ledger.create({
+      type: 'transfer', status: 'confirmed', occurredAt: parseLocalDate(a.occurred_at, new Date()), amount, currency: from.currency,
+      fromAccountId: from.accountId, toAccountId: to.accountId, ...(toAmount != null && { toAmount }),
+      note: typeof a.note === 'string' && a.note.trim() ? a.note.trim() : undefined, source,
+    });
+    await this.showTx(tx.id);
+    return { id: tx.id, from: from.code, to: to.code, amount, toAmount };
   }
 
   private async resolveTarget(id: number | null) {
@@ -480,7 +501,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       await done();
       return this.addItems({ ...p, intent: 'add_expense' }, source);
     }
-    return this.send(esc(p.reply ?? 'Usa los botones de arriba o cuéntame qué gastaste 🙂'));
+    throw new Error('esto no responde al prompt pendiente; usa otra acción o pregúntale');
   }
 
   /** ask_account: the P2P tx whose payMethodName didn't map to a bank. Fill whichever side is the bank. */

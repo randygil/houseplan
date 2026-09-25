@@ -42,6 +42,15 @@ test('money + tarjeta de tx', () => {
   assert.equal(card, '🥖 <b>Panadería &lt;La Nieves&gt;</b> · 350 Bs (≈ $6,00 · tasa 58,30 de tu cambio)\nCuenta: Mercantil   Categoría: Comida › Panadería\n🕒 hoy 08:30\n📝 Borrador');
 });
 
+test('tarjeta de transferencia con cambio', () => {
+  const card = txCard({
+    id: 2, type: 'transfer', status: 'confirmed', amount: '24000', currency: 'VES', amountUsd: '120', fxRate: '200', fxSource: 'p2p',
+    merchant: null, note: 'Cambio personal', justification: null, occurredAt: new Date('2026-09-22T12:30:00Z'),
+    fromAccount: { name: 'BDV' }, toAccount: { name: 'Zelle', currency: 'USD' }, toAmount: '120',
+  }, null, now);
+  assert.equal(card, '🔁 <b>Transferencia</b> · 24.000 Bs (≈ $120,00 · tasa 200,00 del cambio)\nBDV → Zelle (llegaron $120,00)\n🕒 hoy 08:30\n📝 Cambio personal\n✅ Registrado');
+});
+
 test('justificación: > umbral USD o categoría Otros', () => {
   assert.equal(needsJustification({ type: 'expense', amountUsd: 25, justification: null }, 20), true);
   assert.equal(needsJustification({ type: 'expense', amountUsd: 5, justification: null, category: { name: 'Otros' } }, 20), true);
