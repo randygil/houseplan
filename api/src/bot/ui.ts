@@ -82,6 +82,18 @@ export function txCard(t: CardTx, catPath?: string | null, now = new Date()): st
   return rows.join('\n');
 }
 
+/** /deudas: open ones first with what's left, then paid-off ones; total per currency. */
+export function debtsText(ds: { name: string; currency: string; amount: number; paid: number; remaining: number }[]): string {
+  if (!ds.length) return 'No tienes deudas anotadas 🙌 Dime «le debo 200$ a Juan» para anotar una.';
+  const open = ds.filter((d) => d.remaining > 0), done = ds.filter((d) => d.remaining <= 0);
+  const rows = open.map((d) => `💳 <b>${esc(d.name)}</b> · queda ${money(d.remaining, d.currency)}${d.paid > 0 ? ` de ${money(d.amount, d.currency)}` : ''}`);
+  const tot = new Map<string, number>();
+  for (const d of open) tot.set(d.currency, (tot.get(d.currency) ?? 0) + d.remaining);
+  if (open.length > 1) rows.push(`\nTotal: <b>${[...tot].map(([c, n]) => money(n, c)).join(' + ')}</b>`);
+  if (done.length) rows.push(`\n✅ Saldadas: ${done.map((d) => esc(d.name)).join(', ')}`);
+  return rows.join('\n') || 'Todo saldado 🎉';
+}
+
 export function needsJustification(t: { type: string; amountUsd: unknown; justification: string | null; debtId?: number | null; category?: { name: string } | null }, overUsd: number): boolean {
   if (t.justification || t.debtId || (t.type !== 'expense' && t.type !== 'fee')) return false;
   return (t.amountUsd != null && Number(t.amountUsd) > overUsd) || /^otros?$/i.test(t.category?.name ?? '');

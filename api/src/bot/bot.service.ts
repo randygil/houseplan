@@ -14,7 +14,7 @@ import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
 import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, TxInput, TxView } from '../ledger/ledger.service';
-import { cb, dayLabel, esc, hhmm, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
+import { cb, dayLabel, debtsText, esc, hhmm, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
 type Field = 'amount' | 'merchant' | 'note' | 'date';
 export type Awaiting = { kind: Field | 'justification' | 'balance'; txId?: number; accountId?: number; promptId?: number; msgId?: number; at: number };
@@ -22,7 +22,7 @@ type Mode = 'view' | 'edit' | 'acc' | 'cat';
 
 const COMMANDS = [
   ['saldo', 'Saldos de tus cuentas'], ['hoy', 'Gastos de hoy'], ['semana', 'Gastos de la semana'], ['mes', 'Gastos del mes'],
-  ['ultimos', 'Últimos movimientos'], ['deshacer', 'Deshacer el último cambio'], ['pendientes', 'Borradores por confirmar'],
+  ['ultimos', 'Últimos movimientos'], ['deudas', 'Lo que debes'], ['deshacer', 'Deshacer el último cambio'], ['pendientes', 'Borradores por confirmar'],
   ['conciliar', 'Cuadrar un banco o efectivo'], ['panel', 'Abrir el panel'], ['sync', 'Sincronizar Binance'],
   ['backfill', 'Importar historial de Binance'], ['ajustes', 'Ajustes'],
 ] as const;
@@ -69,6 +69,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     });
     bot.command('start', () => safe(() => this.send('¡Hola! 👋 Cuéntame tus gastos como me los dirías a mí: «gasté 350 en pan por Mercantil». También puedes mandarme notas de voz o fotos de facturas.')));
     for (const [name, fn] of Object.entries(this.views)) bot.command(name, () => safe(fn));
+    bot.command('deuda', () => safe(this.views.deudas));
     bot.command('deshacer', () => safe(() => this.undo(null)));
     bot.command('sync', () => safe(() => this.sync()));
     bot.command('backfill', () => safe(async () => {
@@ -270,6 +271,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     mes: () => this.summary(startOfMonth(new Date()), 'este mes'),
     ultimos: () => this.ultimos(),
     pendientes: () => this.pendientes(),
+    deudas: async () => this.send(debtsText(await this.debts.list())),
     conciliar: () => this.conciliar(),
     panel: () => this.panel(),
   };

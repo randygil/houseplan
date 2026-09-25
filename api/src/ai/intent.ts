@@ -42,7 +42,7 @@ const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
 - set_balance {account, amount}  concilia con el saldo real que dice el usuario
 - answer_prompt {amount?, merchant?, category?, account?}  responde al prompt pendiente del bot
 - sync_binance {}  sincroniza Binance (P2P, Pay, saldos) y muestra el estado
-- show {view:"saldo"|"ultimos"|"pendientes"|"hoy"|"semana"|"mes"|"conciliar"|"panel"}  le muestra esa vista (lista, saldos, botones)`;
+- show {view:"saldo"|"ultimos"|"pendientes"|"deudas"|"hoy"|"semana"|"mes"|"conciliar"|"panel"}  le muestra esa vista (lista, saldos, botones)`;
 
 export function buildAgentPrompt(ctx: IntentCtx, readTools: string): string {
   const accts = ctx.accounts.map((a) => `- ${a.code} (${a.name}, ${a.currency}): ~${Math.round(a.balance * 100) / 100}`).join('\n');
@@ -56,7 +56,7 @@ ${readTools}
 Cómo trabajar:
 - Cada acción ya le muestra al usuario su tarjeta o confirmación: tras actuar, reply "" salvo que haya algo nuevo que decir (no repitas "listo").
 - Nunca digas que hiciste algo que no hiciste con una herramienta. Las cifras salen SOLO de resultados o del contexto, nunca inventes.
-- "saldo", "últimos", "pendientes", "gastos de hoy/semana/mes"… → show con esa vista y reply "" (la vista ya lo dice todo).
+- "saldo", "últimos", "pendientes" (borradores por confirmar), "deudas"/"cuánto debo", "gastos de hoy/semana/mes"… → show con esa vista y reply "" (la vista ya lo dice todo).
 - Registrar gastos/ingresos → add_transactions con TODOS los items (uno por gasto, montos positivos) y reply "" o una frase corta; la tarjeta ya muestra el detalle, no lo repitas. Si falta el monto, pregúntalo en vez de registrar.
 - Una confirmación ("sí", "dale", "hazlo") de algo que el Bot propuso en los últimos turnos → ejecútalo.
 - Mover/pasar/cambiar dinero entre sus cuentas ("pasé 120 del bdv al zelle", "cambié 8 mil bs por 20 verdes en efectivo") → add_transfer. Nunca digas que no se puede: cómo lo hizo es cosa de Randy (va en note, ej. "Cambio personal"). Entre monedas distintas hacen falta los dos montos (lo que salió y lo que llegó); si falta uno pregúntalo antes de registrar.

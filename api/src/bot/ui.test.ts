@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { followupText } from './nudges.service';
-import { cb, dayLabel, inQuiet, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard } from './ui';
+import { debtsText, cb, dayLabel, inQuiet, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard } from './ui';
 
 const now = new Date('2026-09-22T14:00:00Z'); // martes 10:00 Caracas
 
@@ -68,4 +68,17 @@ test('texto de seguimiento de bolsas: tono según asignaciones y agrupado', () =
   assert.equal(followupText([bag(1, 11660, 0)], now), 'Del cambio de esta mañana quedan ~11.660 Bs en Mercantil sin movimientos registrados. ¿Gastaste algo?');
   assert.equal(followupText([bag(1, 8460, 2)], now), 'Del cambio de esta mañana registraste 2 gastos (3.200 Bs). Quedan ~8.460 Bs en Mercantil. ¿Algo más?');
   assert.match(followupText([bag(1, 100, 0), bag(2, 200, 1, 'BDV')], now), /^Tienes 2 cambios.*\n• Mercantil: ~100 Bs.*\n• BDV: ~200 Bs \(cambio de esta mañana, 1 gastos\)/);
+});
+
+test('debtsText: abiertas con lo que queda, total por moneda, saldadas aparte', () => {
+  const t = debtsText([
+    { name: 'Préstamo de Chachin', currency: 'USD', amount: 1670, paid: 0, remaining: 1670 },
+    { name: 'Cashea', currency: 'USD', amount: 611, paid: 100, remaining: 511 },
+    { name: 'Tarjeta', currency: 'VES', amount: 4000, paid: 4000, remaining: 0 },
+  ]);
+  assert.match(t, /Préstamo de Chachin<\/b> · queda \$1\.670,00\n/);
+  assert.match(t, /Cashea<\/b> · queda \$511,00 de \$611,00/);
+  assert.match(t, /Total: <b>\$2\.181,00<\/b>/);
+  assert.match(t, /Saldadas: Tarjeta/);
+  assert.match(debtsText([]), /No tienes deudas/);
 });
