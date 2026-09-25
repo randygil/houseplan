@@ -282,8 +282,7 @@ export class NudgesService implements OnModuleInit {
       const now = new Date();
       let text = await this.botSvc.summaryText(startOfDay(now), now, 'de hoy');
       const o = await this.insights.overview();
-      if (o.toJustify) text += `\n\n💬 ${o.toJustify} por justificar`;
-      if (o.pending) text += `\n📝 ${o.pending} borradores en /pendientes`;
+      if (o.pending) text += `\n\n📝 ${o.pending} borradores en /pendientes`;
       await this.botSvc.send(text);
     } catch (e) { this.log.error(e); }
   }

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 import { api, type TxQuery } from '../api'
 import { Card, Loading, fmtNum, useLoad, useMoney } from '../ui'
@@ -7,6 +8,8 @@ type Go = (t: 'movimientos', q?: TxQuery) => void
 export default function Home({ go }: { go: Go }) {
   const { data: o, error } = useLoad(api.overview)
   const m = useMoney()
+  const [minusDebts, setMinusDebts] = useState(() => { try { return localStorage.getItem('plata.minusDebts') === '1' } catch { return false } })
+  const toggleDebts = (v: boolean) => { setMinusDebts(v); try { localStorage.setItem('plata.minusDebts', v ? '1' : '0') } catch {} }
   if (!o) return <Loading error={error} />
 
   const delta = o.lastMonth ? (o.month - o.lastMonth) / o.lastMonth : null
@@ -15,18 +18,21 @@ export default function Home({ go }: { go: Go }) {
   return (
     <div className="space-y-3">
       <Card>
-        <div className="text-[13px] font-medium text-muted">Patrimonio</div>
-        <div className="num mt-1 text-[34px] font-bold leading-tight tracking-tight">{m.usd(o.netWorthUsd)}</div>
-        {(o.toJustify > 0 || o.pending > 0) && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[13px] font-medium text-muted">Patrimonio</div>
+          {o.debtsUsd > 0 && (
+            <label className="flex items-center gap-1.5 text-[13px] text-muted">
+              <input type="checkbox" checked={minusDebts} onChange={(e) => toggleDebts(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+              Restar deudas
+            </label>
+          )}
+        </div>
+        <div className="num mt-1 text-[34px] font-bold leading-tight tracking-tight">{m.usd(o.netWorthUsd - (minusDebts ? o.debtsUsd : 0))}</div>
+        {minusDebts && o.debtsUsd > 0 && <div className="num text-[12px] text-muted">{m.usd(o.netWorthUsd)} − {m.usd(o.debtsUsd)} de deudas</div>}
+        {o.pending > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
-            {o.toJustify > 0 && (
-              <button onClick={() => go('movimientos', { status: 'tojustify' })}
-                className="rounded-full bg-warn-bg px-3 py-1.5 text-[13px] font-semibold text-warn">⚠️ {o.toJustify} por justificar</button>
-            )}
-            {o.pending > 0 && (
-              <button onClick={() => go('movimientos', { status: 'pending' })}
-                className="rounded-full bg-line px-3 py-1.5 text-[13px] font-medium text-fg">{o.pending} pendientes</button>
-            )}
+            <button onClick={() => go('movimientos', { status: 'pending' })}
+              className="rounded-full bg-line px-3 py-1.5 text-[13px] font-medium text-fg">{o.pending} pendientes</button>
           </div>
         )}
       </Card>

@@ -4,7 +4,7 @@ import { Field, SOURCE_BADGE, SOURCE_LABEL, Sheet, btnCls, daysAgo, fmtCur, fmtD
 
 const RANGES: [string, string, number | null][] = [['7', '7 días', 7], ['30', '30 días', 30], ['90', '90 días', 90], ['all', 'Todo', null]]
 const TYPES: [string, string][] = [['', 'Tipo'], ['expense', 'Gasto'], ['income', 'Ingreso'], ['transfer', 'Transferencia'], ['fee', 'Comisión']]
-const STATUSES: [string, string][] = [['', 'Estado'], ['pending', 'Pendiente'], ['tojustify', 'Por justificar'], ['confirmed', 'Confirmado'], ['void', 'Anulado']]
+const STATUSES: [string, string][] = [['', 'Estado'], ['pending', 'Pendiente'], ['confirmed', 'Confirmado'], ['void', 'Anulado']]
 
 const accOf = (b: Balance): Account => ({ id: b.accountId, code: b.code, name: b.name, currency: b.currency, kind: b.kind })
 
@@ -153,7 +153,7 @@ function Row({ t, first, onTap }: { t: TxView; first: boolean; onTap: () => void
       </div>
       <div className="text-right">
         <div className={`num text-[15px] font-semibold ${voided ? 'line-through text-muted' : t.type === 'income' ? 'text-good' : ''}`}>{sign}{m.tx(t)}</div>
-        {pending && <div className="text-[11px] font-semibold text-warn">{!t.justified && t.type !== 'transfer' ? 'por justificar' : 'pendiente'}</div>}
+        {pending && <div className="text-[11px] font-semibold text-warn">pendiente</div>}
       </div>
     </button>
   )
@@ -165,7 +165,7 @@ const toLocalInput = (iso: string) => { const d = new Date(iso); return new Date
 function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   tx: TxView | null; onClose: () => void; cats: Category[]; accounts: Account[]; onSaved: (t: Transaction | null, old: TxView) => void
 }) {
-  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', justification: '', debtId: '' })
+  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', debtId: '' })
   const debts = useLoad(api.debts).data ?? []
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -177,7 +177,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     setV({
       amount: String(num(tx.amount)), date: toLocalInput(tx.occurredAt), categoryId: tx.categoryId ? String(tx.categoryId) : '',
       accountId: String((accKey === 'toAccountId' ? tx.toAccountId : tx.fromAccountId) ?? ''),
-      merchant: tx.merchant ?? '', note: tx.note ?? '', justification: tx.justification ?? '', debtId: tx.debtId ? String(tx.debtId) : '',
+      merchant: tx.merchant ?? '', note: tx.note ?? '', debtId: tx.debtId ? String(tx.debtId) : '',
     })
   }, [tx, accKey])
 
@@ -193,7 +193,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     occurredAt: v.date && v.date !== toLocalInput(tx.occurredAt) ? new Date(v.date).toISOString() : undefined,
     categoryId: v.categoryId ? +v.categoryId : undefined,
     [accKey]: v.accountId ? +v.accountId : undefined,
-    merchant: v.merchant || undefined, note: v.note || undefined, justification: v.justification || undefined,
+    merchant: v.merchant || undefined, note: v.note || undefined,
     debtId: (+v.debtId || null) !== (tx.debtId ?? null) ? +v.debtId || null : undefined,
   }), 'Guardado')
 
@@ -250,9 +250,6 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
         </Field>
         <Field label="Nota">
           <input value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} className={inputCls} />
-        </Field>
-        <Field label="Justificación">
-          <textarea rows={2} value={v.justification} onChange={(e) => setV({ ...v, justification: e.target.value })} className={inputCls + ' resize-none'} placeholder="¿En qué se fue?" />
         </Field>
       </div>
 

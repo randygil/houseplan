@@ -3,6 +3,7 @@ import { PrismaService } from '../db/prisma.service';
 import { TZ, ymd } from '../fx/fx.service';
 import { Prisma, type Bag } from '../generated/prisma/client';
 import { CategoriesService } from '../ledger/categories.service';
+import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, TX_INCLUDE, type TxView } from '../ledger/ledger.service';
 
 /** `to` is inclusive. */
@@ -11,11 +12,10 @@ type Group = 'category' | 'account' | 'merchant' | 'day';
 type Row = { key: string; label: string; total: number; count: number };
 
 const SPEND = Prisma.sql`t.type IN ('expense','fee') AND t.status <> 'void'`;
-const justifyOver = () => Number(process.env.JUSTIFY_OVER_USD ?? 20);
 
 @Injectable()
 export class InsightsService {
-  constructor(private db: PrismaService, private ledger: LedgerService, private categories: CategoriesService) {}
+  constructor(private db: PrismaService, private ledger: LedgerService, private categories: CategoriesService, private debts: DebtsService) {}
 
   async spendSummary(r: Range & { groupBy: Group; currency?: 'USD' | 'VES' }): Promise<Row[]> {
     const key = {
@@ -57,20 +57,16 @@ export class InsightsService {
     type?: string; status?: string; limit?: number; cursor?: number;
   }): Promise<{ items: TxView[]; nextCursor: number | null }> {
     const take = Math.min(q.limit ?? 50, 500);
-    // 'tojustify' = same rule as overview().toJustify (any status, not only pending)
-    const tj = q.status === 'tojustify';
     const where: Prisma.TransactionWhereInput = {
-      status: tj || !q.status ? { not: 'void' } : q.status,
-      type: q.type ?? (tj ? { in: ['expense', 'fee'] } : undefined),
-      ...(tj && { justified: false }),
+      status: q.status || { not: 'void' },
+      type: q.type,
       ...((q.from || q.to) && { occurredAt: { gte: q.from, lte: q.to } }),
       ...((q.min != null || q.max != null) && { amountUsd: { gte: q.min, lte: q.max } }),
       merchant: q.merchant ? { contains: q.merchant, mode: 'insensitive' } : undefined,
       AND: [
         q.accountId ? { OR: [{ fromAccountId: q.accountId }, { toAccountId: q.accountId }] } : {},
         q.categoryId ? { OR: [{ categoryId: q.categoryId }, { category: { parentId: q.categoryId } }] } : {},
-        tj ? { OR: [{ amountUsd: { gt: justifyOver() } }, { category: { name: 'Otros' } }] } : {},
-        q.text ? { OR: (['merchant', 'note', 'justification'] as const).map((f) => ({ [f]: { contains: q.text, mode: 'insensitive' } })) } : {},
+        q.text ? { OR: (['merchant', 'note'] as const).map((f) => ({ [f]: { contains: q.text, mode: 'insensitive' } })) } : {},
       ],
     };
     const items = await this.db.transaction.findMany({
@@ -114,9 +110,8 @@ export class InsightsService {
           coalesce(sum(t."amountUsd") FILTER (WHERE t."occurredAt" >= ${at(Prisma.sql`date_trunc('week', now() AT TIME ZONE ${TZ})`)}), 0) AS week,
           coalesce(sum(t."amountUsd") FILTER (WHERE t."occurredAt" >= ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ})`)}), 0) AS month,
           coalesce(sum(t."amountUsd") FILTER (WHERE t."occurredAt" >= ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ}) - interval '1 month'`)}
-                                              AND t."occurredAt" < ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ})`)}), 0) AS "lastMonth",
-          count(*) FILTER (WHERE NOT t.justified AND (t."amountUsd" > ${justifyOver()} OR c.name = 'Otros')) AS "toJustify"
-        FROM transactions t LEFT JOIN categories c ON c.id = t."categoryId"
+                                              AND t."occurredAt" < ${at(Prisma.sql`date_trunc('month', now() AT TIME ZONE ${TZ})`)}), 0) AS "lastMonth"
+        FROM transactions t
         WHERE ${SPEND}`,
       this.ledger.balances(),
       this.db.fxRate.findFirst({ where: { source: 'bcv' }, orderBy: { date: 'desc' } }),
@@ -128,16 +123,18 @@ export class InsightsService {
         LEFT JOIN transactions t ON ${SPEND} AND (t."occurredAt" AT TIME ZONE ${TZ})::date = d::date
         GROUP BY d ORDER BY d`,
     ]);
-    const [pending, all] = await Promise.all([
+    const [pending, all, debts] = await Promise.all([
       this.db.transaction.count({ where: { status: 'pending' } }),
       this.db.walletSnapshot.findFirst({ where: { wallet: 'all' }, orderBy: { takenAt: 'desc' } }),
+      this.debts.list(),
     ]);
     // Binance part from the all-wallets snapshot (Earn, bots, other coins) when we have it; synced accounts only hold USDT
     const binanceAll = all ? Object.values(all.balances as Record<string, number>).reduce((n, v) => n + Number(v), 0) : null;
     return {
       netWorthUsd: balances.reduce((n, b) => n + (binanceAll != null && b.kind === 'synced' ? 0 : b.balanceUsd ?? 0), 0) + (binanceAll ?? 0),
+      debtsUsd: debts.reduce((n, d) => n + d.remainingUsd, 0),
       today: Number(s.today), week: Number(s.week), month: Number(s.month), lastMonth: Number(s.lastMonth),
-      toJustify: Number(s.toJustify), pending,
+      pending,
       rates: { bcv: bcv ? Number(bcv.vesPerUsd) : null, p2p: p2p ? Number(p2p.vesPerUsd) : null, market: market ? Number(market.vesPerUsd) : null },
       spark: spark.map((x) => ({ date: x.date, total: Number(x.total) })),
     };

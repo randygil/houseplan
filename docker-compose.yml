@@ -36,7 +36,6 @@ services:
       NUDGE_TIMES: ${NUDGE_TIMES:-13:30,20:30}
       QUIET_HOURS: ${QUIET_HOURS:-22:00-08:00}
       NUDGE_DAILY_CAP: ${NUDGE_DAILY_CAP:-4}
-      JUSTIFY_OVER_USD: ${JUSTIFY_OVER_USD:-20}
       CARD_DELTA_MIN_USDT: ${CARD_DELTA_MIN_USDT:-1}
     depends_on:
       db: { condition: service_healthy }

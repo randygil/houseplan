@@ -40,7 +40,7 @@ test('normalizeIntent: gasto multi-item, monedas y cuentas por alias', () => {
     items: [
       { amount: 350, currency: 'bs', account: 'Mercantil', merchant: 'panadería', category: 'Comida › Panadería', occurred_at: '2026-09-22T08:30' },
       { amount: '20', currency: 'verdes', account: 'efectivo', merchant: 'gasolina', category: null },
-      { amount: '5 lucas', currency: null, account: 'pago móvil', merchant: 'farmacia', category: 'Salud', justification: ' medicinas de mamá ', debt_id: null },
+      { amount: '5 lucas', currency: null, account: 'pago móvil', merchant: 'farmacia', category: 'Salud', note: ' medicinas de mamá ', debt_id: null },
       { amount: 50, currency: 'USD', account: 'zelle', merchant: 'Juan', category: 'Deudas', debt_id: '#3' },
     ],
   }, { now, accounts });
@@ -50,7 +50,7 @@ test('normalizeIntent: gasto multi-item, monedas y cuentas por alias', () => {
   assert.deepEqual(p.needs.sort(), ['account', 'category']);
   assert.equal(p.items[0].occurredAt.toISOString(), '2026-09-22T12:30:00.000Z');
   assert.equal(p.items[1].occurredAt, now);
-  assert.deepEqual(p.items.map((i) => i.justification), [null, null, 'medicinas de mamá', null]);
+  assert.deepEqual(p.items.map((i) => i.note), [null, null, 'medicinas de mamá', null]);
   assert.deepEqual(p.items.map((i) => i.debtId), [null, null, null, 3]);
 });
 

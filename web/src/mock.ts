@@ -47,7 +47,7 @@ for (let i = 0; i < 140; i++) {
     type: 'expense', status: pending ? 'pending' : 'confirmed', amount: ves ? Math.round(usd * P2P * 100) / 100 : usd,
     currency: acc.currency, amountUsd: usd, fxRate: ves ? P2P : null, fxSource: ves ? 'bag' : null,
     fromAccountId: acc.id, fromAccount: acc, categoryId, category: cats.find((c) => c.id === categoryId)!, merchant,
-    source: src, justified: !pending,
+    source: src,
   }))
 }
 for (let w = 0; w < 8; w++) {
@@ -62,19 +62,19 @@ for (let w = 0; w < 8; w++) {
 }
 txs.push(tx(900, new Date(now - 2 * 36e5), {
   type: 'expense', status: 'pending', amount: 3420, currency: 'VES', amountUsd: 16.66, fromAccountId: 3, fromAccount: accounts[1],
-  source: 'reconcile', merchant: null, justified: false, note: 'Diferencia de conciliación',
+  source: 'reconcile', merchant: null, note: 'Diferencia de conciliación',
 }))
 txs.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
 let debts: Debt[] = [
-  { id: 1, name: 'Préstamo de Juan', currency: 'USD', amount: 200, note: null, createdAt: new Date(now - 20 * 864e5).toISOString(), paid: 50, remaining: 150, payments: 1 },
-  { id: 2, name: 'Tarjeta Mercantil', currency: 'VES', amount: 40000, note: null, createdAt: new Date(now - 40 * 864e5).toISOString(), paid: 40000, remaining: 0, payments: 3 },
+  { id: 1, name: 'Préstamo de Juan', currency: 'USD', amount: 200, note: null, createdAt: new Date(now - 20 * 864e5).toISOString(), paid: 50, remaining: 150, remainingUsd: 150, payments: 1 },
+  { id: 2, name: 'Tarjeta Mercantil', currency: 'VES', amount: 40000, note: null, createdAt: new Date(now - 40 * 864e5).toISOString(), paid: 40000, remaining: 0, remainingUsd: 0, payments: 3 },
 ]
 
 function tx(id: number, at: Date, p: Partial<TxView>): TxView {
   return {
     id, type: 'expense', status: 'confirmed', occurredAt: at.toISOString(), amount: 0, currency: 'USD', amountUsd: null,
     fxRate: null, fxSource: null, fromAccountId: null, toAccountId: null, toAmount: null, categoryId: null, merchant: null,
-    note: null, justified: true, justification: null, source: 'manual_text', bagId: null, debtId: null, confidence: null,
+    note: null, source: 'manual_text', bagId: null, debtId: null, confidence: null,
     createdAt: at.toISOString(), updatedAt: at.toISOString(), category: null, fromAccount: null, toAccount: null, ...p,
   }
 }
@@ -100,8 +100,8 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
       return { date: d, total: sum(txs.filter((t) => spend(t) && t.occurredAt.slice(0, 10) === d)) }
     })
     return {
-      netWorthUsd: 2843.17, today: sum(sinceDays(1)), week: sum(sinceDays(7)), month: sum(sinceDays(22)), lastMonth: 812.4,
-      toJustify: txs.filter((t) => t.status === 'pending' && !t.justified).length, pending: txs.filter((t) => t.status === 'pending').length,
+      netWorthUsd: 2843.17, debtsUsd: 150, today: sum(sinceDays(1)), week: sum(sinceDays(7)), month: sum(sinceDays(22)), lastMonth: 812.4,
+      pending: txs.filter((t) => t.status === 'pending').length,
       rates: { bcv: BCV, p2p: P2P, market: P2P + 3 }, spark,
     }
   }
@@ -119,9 +119,9 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
   if ((r = p.match(/^\/transactions\/(\d+)(?:\/(\w+))?$/))) {
     const t = txs.find((x) => x.id === +r![1])!
     if (r[2] === 'void') t.status = 'void'
-    else if (r[2] === 'confirm') { t.status = 'confirmed'; t.justified = true }
+    else if (r[2] === 'confirm') t.status = 'confirmed'
     else if (r[2] === 'undo') t.status = 'confirmed'
-    else Object.assign(t, body, body.justification ? { justified: true } : {})
+    else Object.assign(t, body)
     t.category = cats.find((c) => c.id === t.categoryId) ?? null
     return { ...t }
   }
@@ -177,7 +177,7 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
     return q.get('openOnly') ? bags.filter((b) => b.remaining > 0) : bags
   }
   if (p === '/debts' && m === 'GET') return debts
-  if (p === '/debts') { const d: Debt = { id: debts.length + 1, createdAt: new Date().toISOString(), note: null, ...body, paid: 0, remaining: body.amount, payments: 0 }; debts.push(d); return d }
+  if (p === '/debts') { const d: Debt = { id: debts.length + 1, createdAt: new Date().toISOString(), note: null, ...body, paid: 0, remaining: body.amount, remainingUsd: body.currency === 'VES' ? body.amount / P2P : body.amount, payments: 0 }; debts.push(d); return d }
   if ((r = p.match(/^\/debts\/(\d+)$/))) { debts = debts.filter((d) => d.id !== +r![1]); return null }
   if (p === '/ask') {
     const qn = String(body.question).toLowerCase()

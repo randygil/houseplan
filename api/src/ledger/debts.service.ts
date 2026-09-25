@@ -14,7 +14,7 @@ export function paidIn(debtCurrency: string, p: Pay, vesPerUsd: number | null): 
 
 export type DebtView = {
   id: number; name: string; currency: string; amount: number; note: string | null; createdAt: Date;
-  paid: number; remaining: number; payments: number;
+  paid: number; remaining: number; remainingUsd: number; payments: number;
 };
 
 @Injectable()
@@ -28,7 +28,8 @@ export class DebtsService {
     ]);
     return rows.map(({ payments, ...d }) => {
       const paid = payments.reduce((s, p) => s + paidIn(d.currency, p, rate), 0);
-      return { ...d, amount: Number(d.amount), paid, remaining: Math.max(0, Number(d.amount) - paid), payments: payments.length };
+      const remaining = Math.max(0, Number(d.amount) - paid);
+      return { ...d, amount: Number(d.amount), paid, remaining, remainingUsd: isUsd(d.currency) ? remaining : rate ? remaining / rate : 0, payments: payments.length };
     });
   }
 

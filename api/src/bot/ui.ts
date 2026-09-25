@@ -51,7 +51,7 @@ export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 export type CardTx = {
   id: number; type: string; status: string; amount: unknown; currency: string; amountUsd: unknown; fxRate: unknown;
-  fxSource: string | null; merchant: string | null; note: string | null; justification: string | null; occurredAt: Date; debt?: { name: string } | null;
+  fxSource: string | null; merchant: string | null; note: string | null; occurredAt: Date; debt?: { name: string } | null;
   category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string; currency?: string } | null; toAmount?: unknown;
 };
 
@@ -76,7 +76,6 @@ export function txCard(t: CardTx, catPath?: string | null, now = new Date()): st
   const day = dayLabel(t.occurredAt, now).replace(/^de (esta mañana|hoy)$/, 'hoy').replace(/^del? /, '');
   rows.push(`🕒 ${day} ${hhmm(t.occurredAt)}`);
   if (t.note) rows.push(`📝 ${esc(t.note)}`);
-  if (t.justification) rows.push(`💬 ${esc(t.justification)}`);
   if (t.debt) rows.push(`💳 Abono a ${esc(t.debt.name)}`);
   rows.push(t.status === 'confirmed' ? '✅ Registrado' : t.status === 'void' ? '❌ Cancelado' : '📝 Borrador');
   return rows.join('\n');
@@ -92,11 +91,6 @@ export function debtsText(ds: { name: string; currency: string; amount: number; 
   if (open.length > 1) rows.push(`\nTotal: <b>${[...tot].map(([c, n]) => money(n, c)).join(' + ')}</b>`);
   if (done.length) rows.push(`\n✅ Saldadas: ${done.map((d) => esc(d.name)).join(', ')}`);
   return rows.join('\n') || 'Todo saldado 🎉';
-}
-
-export function needsJustification(t: { type: string; amountUsd: unknown; justification: string | null; debtId?: number | null; category?: { name: string } | null }, overUsd: number): boolean {
-  if (t.justification || t.debtId || (t.type !== 'expense' && t.type !== 'fee')) return false;
-  return (t.amountUsd != null && Number(t.amountUsd) > overUsd) || /^otros?$/i.test(t.category?.name ?? '');
 }
 
 /** Callback data must be ≤64 bytes. */

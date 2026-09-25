@@ -104,8 +104,6 @@ model Transaction {
   category      Category? @relation(fields: [categoryId], references: [id])
   merchant      String?
   note          String?
-  justified     Boolean   @default(false)
-  justification String?
   source        String
   rawEventId    Int?
   rawEvent      RawEvent? @relation(fields: [rawEventId], references: [id])

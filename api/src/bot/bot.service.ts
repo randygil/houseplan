@@ -14,10 +14,10 @@ import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
 import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, TxInput, TxView } from '../ledger/ledger.service';
-import { cb, dayLabel, debtsText, esc, hhmm, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
+import { cb, dayLabel, debtsText, esc, hhmm, money, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
 type Field = 'amount' | 'merchant' | 'note' | 'date';
-export type Awaiting = { kind: Field | 'justification' | 'balance'; txId?: number; accountId?: number; promptId?: number; msgId?: number; at: number };
+export type Awaiting = { kind: Field | 'balance'; txId?: number; accountId?: number; promptId?: number; msgId?: number; at: number };
 type Mode = 'view' | 'edit' | 'acc' | 'cat';
 
 const COMMANDS = [
@@ -40,7 +40,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   readonly chatId = Number(process.env.TG_ALLOWED_ID);
   /** Single user => one pending free-text answer at a time. */
   awaiting: Awaiting | null = null;
-  private justifyOver = Number(process.env.JUSTIFY_OVER_USD ?? 20);
   private publicUrl = (process.env.PUBLIC_URL ?? '').replace(/\/$/, '');
 
   constructor(
@@ -164,7 +163,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   embedTx(tx: TxView, catPath?: string | null) {
     const content = [
       tx.type === 'income' ? 'ingreso' : 'gasto', tx.merchant, catPath ?? tx.category?.name, money(Number(tx.amount), tx.currency),
-      tx.fromAccount?.name ?? tx.toAccount?.name, tx.note, tx.justification, caracasIso(tx.occurredAt).replace('T', ' '),
+      tx.fromAccount?.name ?? tx.toAccount?.name, tx.note, caracasIso(tx.occurredAt).replace('T', ' '),
     ].filter(Boolean).join(' · ');
     this.emb.upsertFor('transaction', tx.id, content).catch((e) => this.log.warn(`embed: ${e.message}`));
   }
@@ -247,20 +246,14 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       case 'f':
         this.awaiting = { kind: arg as Field, txId: id, msgId, at: Date.now() };
         return this.send(FIELD_ASK[arg as Field] ?? '¿Qué valor?');
-      case 'js':
-        this.awaiting = null;
-        return msgId && this.edit(msgId, '👌 Sin justificación.');
     }
   }
 
-  /** After a tx is confirmed: embed + maybe ask why (PLAN: > JUSTIFY_OVER_USD or category Otros). */
+  /** After a tx is confirmed: embed it for semantic search. */
   async afterConfirm(id: number) {
     const tx = await this.ledger.get(id);
     if (!tx) return;
     this.embedTx(tx, (await this.cats.list()).find((c) => c.id === tx.categoryId)?.path);
-    if (!needsJustification(tx, this.justifyOver)) return;
-    const m = await this.send('💬 ¿Para qué fue? Así después entiendes en qué se fue la plata.', new InlineKeyboard().text('Omitir', cb('t', 'js', id)));
-    this.awaiting = { kind: 'justification', txId: id, msgId: m.message_id, at: Date.now() };
   }
 
   /** Screens shared by /commands and the agent's `show` tool. */
@@ -334,14 +327,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       return true;
     }
     const id = a.txId!;
-    if (a.kind === 'justification') {
-      if (t.length > 200) return false; // looks like a new message, not an answer
-      await this.ledger.update(id, { justification: t });
-      if (a.msgId) await this.edit(a.msgId, `💬 ${esc(t)}`);
-      const tx = await this.ledger.get(id);
-      if (tx) this.embedTx(tx);
-      return true;
-    }
     const patch: Partial<TxInput> = {};
     if (a.kind === 'amount') { const n = parseAmount(t); if (n == null) return false; patch.amount = n; }
     if (a.kind === 'date') { const d = parseWhen(t, new Date()); if (!d) return false; patch.occurredAt = d; }
@@ -369,7 +354,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       const tx = await this.ledger.create({
         type, status: 'pending', occurredAt: it.occurredAt, amount: it.amount, currency: it.currency ?? 'VES',
         ...(type === 'income' ? { toAccountId: it.accountId ?? undefined } : { fromAccountId: it.accountId ?? undefined }),
-        categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined, justification: it.justification ?? undefined,
+        categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined,
         debtId: it.debtId ?? undefined, source, confidence: p.confidence,
       });
       const auto = p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
@@ -429,7 +414,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (q.currency) patch.currency = q.currency;
     if (q.merchant) patch.merchant = q.merchant;
     if (q.note) patch.note = q.note;
-    if (q.justification) patch.justification = q.justification;
     if (q.debtId && (await this.debts.get(q.debtId))) patch.debtId = q.debtId;
     if (q.occurredAt) patch.occurredAt = q.occurredAt;
     let moved = false;
@@ -491,7 +475,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     const acc = (await this.ledger.balances()).find((a) => a.accountId === accountId);
     const cur = acc?.currency ?? 'VES';
     if (Math.abs(diff) < 0.01) return this.send(`✅ ${esc(acc?.name ?? '')} cuadra perfecto.`);
-    if (tx) return this.showTx(tx.id, { mode: 'cat', prefix: `Faltan ${money(-diff, cur)} en ${esc(acc?.name ?? '')}: lo dejé como gasto por justificar. ¿En qué fue?` });
+    if (tx) return this.showTx(tx.id, { mode: 'cat', prefix: `Faltan ${money(-diff, cur)} en ${esc(acc?.name ?? '')}: lo dejé como gasto. ¿En qué fue?` });
     return this.send(`👌 Ajusté ${esc(acc?.name ?? '')}: hay ${money(diff, cur)} más de lo que tenía anotado.`);
   }
 
@@ -604,7 +588,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     }
     // ponytail: bulk skips transaction_versions/bag re-allocation — bags are closed below anyway
     await this.db.$transaction([
-      this.db.transaction.updateMany({ where: { status: 'pending' }, data: act === 'ok' ? { status: 'confirmed', justified: true } : { status: 'void' } }),
+      this.db.transaction.updateMany({ where: { status: 'pending' }, data: act === 'ok' ? { status: 'confirmed' } : { status: 'void' } }),
       this.db.pendingPrompt.updateMany({ where: { answeredAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } }),
       this.db.bag.updateMany({ where: { closedAt: null }, data: { closedAt: new Date() } }),
     ]);
@@ -671,7 +655,6 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       '⚙️ <b>Ajustes</b>',
       `Recordatorios: ${process.env.NUDGE_TIMES ?? '13:30,20:30'} · máx ${process.env.NUDGE_DAILY_CAP ?? 4}/día`,
       `Silencio: ${process.env.QUIET_HOURS ?? '22:00-08:00'}`,
-      `Pido justificación sobre ${usd(this.justifyOver)} o categoría Otros`,
       `Resumen diario 21:00: ${daily ? 'sí' : 'no'}`,
       '<i>Lo demás se cambia en el .env del servidor.</i>',
     ].join('\n');

@@ -23,8 +23,6 @@ export type Transaction = {
   categoryId: number | null
   merchant: string | null
   note: string | null
-  justified: boolean
-  justification: string | null
   source: string
   bagId: number | null
   debtId: number | null
@@ -35,17 +33,17 @@ export type Transaction = {
 export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt?: { id: number; name: string } | null }
 
 /** What Randy owes; payments are expenses linked by debtId. `paid`/`remaining` in the debt's currency. */
-export type Debt = { id: number; name: string; currency: string; amount: number; note: string | null; createdAt: string; paid: number; remaining: number; payments: number }
+export type Debt = { id: number; name: string; currency: string; amount: number; note: string | null; createdAt: string; paid: number; remaining: number; remainingUsd: number; payments: number }
 
 export type TxInput = Partial<{
   type: TxType; status: 'pending' | 'confirmed'; occurredAt: string; amount: number; currency: string
   fromAccountId: number; toAccountId: number; toAmount: number; categoryId: number
-  merchant: string; note: string; justification: string; source: string; debtId: number | null
+  merchant: string; note: string; source: string; debtId: number | null
 }>
 
 export type Overview = {
-  netWorthUsd: number; today: number; week: number; month: number; lastMonth: number
-  toJustify: number; pending: number
+  netWorthUsd: number; debtsUsd: number; today: number; week: number; month: number; lastMonth: number
+  pending: number
   rates: { bcv: number | null; p2p: number | null; market: number | null }
   spark: { date: string; total: number }[]
 }

@@ -28,7 +28,7 @@ const HINT =
 const slim = (t: TxView) => ({
   id: t.id, date: caracasIso(t.occurredAt), type: t.type, status: t.status, amount: Number(t.amount), currency: t.currency,
   usd: t.amountUsd == null ? null : Number(t.amountUsd), merchant: t.merchant, category: t.category?.name ?? null,
-  account: t.fromAccount?.code ?? t.toAccount?.code ?? null, note: t.note, justification: t.justification,
+  account: t.fromAccount?.code ?? t.toAccount?.code ?? null, note: t.note,
 });
 
 @Injectable()

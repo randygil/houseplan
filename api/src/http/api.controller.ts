@@ -45,7 +45,7 @@ const oneOf = <T extends string>(v: unknown, opts: readonly T[], name: string, d
 
 const TYPES = ['transfer', 'expense', 'income', 'fee'] as const;
 const NUMERIC = ['amount', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId', 'debtId', 'rawEventId', 'confidence', 'fxRate'] as const;
-const STRINGS = ['currency', 'merchant', 'note', 'justification', 'source', 'fxSource'] as const;
+const STRINGS = ['currency', 'merchant', 'note', 'source', 'fxSource'] as const;
 
 function txBody(b: any, partial: boolean): Partial<TxInput> {
   if (!b || typeof b !== 'object') throw new BadRequestException('body required');

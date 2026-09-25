@@ -53,7 +53,7 @@ function Reconcile({ b, onClose, onDone }: { b: Balance | null; onClose: () => v
     try {
       const r = await api.reconcile(b.accountId, actual)
       setRes(Math.abs(r.diff) < 0.005 ? 'Cuadra perfecto ✓' :
-        r.diff < 0 ? `Faltan ${fmtCur(-r.diff, b.currency)} — quedó un gasto pendiente por justificar` : `Sobran ${fmtCur(r.diff, b.currency)} — ajustado`)
+        r.diff < 0 ? `Faltan ${fmtCur(-r.diff, b.currency)} — quedó como gasto pendiente` : `Sobran ${fmtCur(r.diff, b.currency)} — ajustado`)
       onDone()
     } catch (e: any) { setRes('Error: ' + e.message) } finally { setBusy(false) }
   }

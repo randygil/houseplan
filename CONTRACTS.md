@@ -5,7 +5,6 @@ Cambios al esquema: sólo añadir (nuevo archivo de migración `prisma/migration
 
 ## Defaults mientras Randy responde las preguntas abiertas
 - Telegram. Cuentas: binance_spot, binance_funding (USDT, synced), mercantil, bdv (VES, ledger), cash_usd (USD, ledger), cash_ves (VES, ledger).
-- Justificación: se pide sólo si amount_usd > `JUSTIFY_OVER_USD` (20) o categoría "Otros".
 - Tasa para USD de gastos en VES: bolsa FIFO de esa cuenta → si no hay, p2p_avg del día → bcv → none.
 - Nudges: `NUDGE_TIMES=13:30,20:30`, silencio `QUIET_HOURS=22:00-08:00`, `NUDGE_DAILY_CAP=4`. TZ America/Caracas.
 
@@ -31,7 +30,7 @@ type TxInput = {
   type: 'transfer'|'expense'|'income'|'fee'; status?: 'pending'|'confirmed';
   occurredAt: Date; amount: number; currency: string;
   fromAccountId?: number; toAccountId?: number; toAmount?: number;
-  categoryId?: number; merchant?: string; note?: string; justification?: string;
+  categoryId?: number; merchant?: string; note?: string; debtId?: number;
   source: string; rawEventId?: number; confidence?: number; fxRate?: number; fxSource?: string;
 };
 class LedgerService {
@@ -43,7 +42,7 @@ class LedgerService {
   recent(n?: number): Promise<TxView[]>;                     // últimos tocados (updatedAt desc), no void
   get(id: number): Promise<TxView | null>;
   balances(): Promise<{ accountId: number; code: string; name: string; currency: string; kind: string; balance: number; balanceUsd: number | null; lastReconciledAt: Date | null }[]>;
-  reconcile(accountId: number, actual: number): Promise<{ diff: number; tx: Transaction | null }>; // diff<0 => expense pending source='reconcile' justified=false
+  reconcile(accountId: number, actual: number): Promise<{ diff: number; tx: Transaction | null }>; // diff<0 => expense pending source='reconcile'
   accountByCode(code: string): Promise<Account>;
   accountByPayMethod(payMethodName: string): Promise<Account | null>;
 }
@@ -81,7 +80,7 @@ class InsightsService {
   listTransactions(q: Partial<Range> & { categoryId?: number; accountId?: number; merchant?: string; text?: string; min?: number; max?: number; type?: string; status?: string; limit?: number; cursor?: number }): Promise<{ items: TxView[]; nextCursor: number | null }>;
   comparePeriods(a: Range, b: Range, groupBy: 'category'|'account'|'merchant'): Promise<{ key: string; label: string; a: number; b: number; delta: number }[]>;
   bagStatus(opts: { bagId?: number; openOnly?: boolean }): Promise<{ bag: Bag; account: string; spent: number; remaining: number; txs: TxView[] }[]>;
-  overview(): Promise<{ netWorthUsd: number; today: number; week: number; month: number; lastMonth: number; toJustify: number; pending: number; rates: { bcv: number|null; p2p: number|null }; spark: { date: string; total: number }[] }>;
+  overview(): Promise<{ netWorthUsd: number; debtsUsd: number; today: number; week: number; month: number; lastMonth: number; pending: number; rates: { bcv: number|null; p2p: number|null }; spark: { date: string; total: number }[] }>;
   heatmap(r: Range): Promise<{ dow: number; hour: number; total: number }[]>;
   rateHistory(r: Range): Promise<{ date: string; bcv: number|null; p2p: number|null }[]>;
 }
