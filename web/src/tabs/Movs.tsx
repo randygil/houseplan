@@ -165,7 +165,8 @@ const toLocalInput = (iso: string) => { const d = new Date(iso); return new Date
 function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   tx: TxView | null; onClose: () => void; cats: Category[]; accounts: Account[]; onSaved: (t: Transaction | null, old: TxView) => void
 }) {
-  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', justification: '' })
+  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', justification: '', debtId: '' })
+  const debts = useLoad(api.debts).data ?? []
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const accKey = tx?.type === 'income' ? 'toAccountId' : 'fromAccountId'
@@ -176,7 +177,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     setV({
       amount: String(num(tx.amount)), date: toLocalInput(tx.occurredAt), categoryId: tx.categoryId ? String(tx.categoryId) : '',
       accountId: String((accKey === 'toAccountId' ? tx.toAccountId : tx.fromAccountId) ?? ''),
-      merchant: tx.merchant ?? '', note: tx.note ?? '', justification: tx.justification ?? '',
+      merchant: tx.merchant ?? '', note: tx.note ?? '', justification: tx.justification ?? '', debtId: tx.debtId ? String(tx.debtId) : '',
     })
   }, [tx, accKey])
 
@@ -193,6 +194,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     categoryId: v.categoryId ? +v.categoryId : undefined,
     [accKey]: v.accountId ? +v.accountId : undefined,
     merchant: v.merchant || undefined, note: v.note || undefined, justification: v.justification || undefined,
+    debtId: (+v.debtId || null) !== (tx.debtId ?? null) ? +v.debtId || null : undefined,
   }), 'Guardado')
 
   return (
@@ -232,6 +234,14 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
             <select value={v.categoryId} onChange={(e) => setV({ ...v, categoryId: e.target.value })} className={inputCls}>
               <option value="">Sin categoría</option>
               {cats.map((c) => <option key={c.id} value={c.id}>{catLabel(c)}</option>)}
+            </select>
+          </Field>
+        )}
+        {tx.type === 'expense' && debts.length > 0 && (
+          <Field label="Abono a deuda">
+            <select value={v.debtId} onChange={(e) => setV({ ...v, debtId: e.target.value })} className={inputCls}>
+              <option value="">No es pago de deuda</option>
+              {debts.map((d) => <option key={d.id} value={d.id}>{d.name} · queda {fmtCur(d.remaining, d.currency)}</option>)}
             </select>
           </Field>
         )}

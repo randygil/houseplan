@@ -6,7 +6,7 @@ export type Intent = (typeof INTENTS)[number];
 export type Item = {
   type?: 'expense' | 'income';
   amount: number | null; currency: string | null; account: string | null; merchant: string | null;
-  category: string | null; occurredAt: Date; note: string | null;
+  category: string | null; occurredAt: Date; note: string | null; justification: string | null; debtId: number | null;
 };
 export type Parsed = {
   intent: Intent; items: Item[]; targetTxId: number | null; patch: Partial<Item> | null;
@@ -18,6 +18,7 @@ export type IntentCtx = {
   categories: string[];
   turns: { role: string; text: string }[];
   recent: string[];
+  debts: string[];
   pending: string | null;
 };
 
@@ -32,9 +33,10 @@ export const AGENT_HINT =
   '{"calls":[{"tool":string,"args":{}}],"reply":string}  (calls opcional; omite "reply" si necesitas ver resultados antes de responder)';
 
 const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
-- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
+- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note, justification, debt_id:<#id>|null}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
 - add_transfer {from:"<code>", to:"<code>", amount, to_amount?, occurred_at?, note?}  mueve dinero entre cuentas propias (no es gasto). amount en la moneda de "from"; si "to" tiene otra moneda es un cambio y to_amount es lo que llegó
-- edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?}  sólo los campos que cambian
+- edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?, justification?, debt_id?}  sólo los campos que cambian
+- add_debt {name, amount, currency, note?}  anota una deuda nueva de Randy (no es gasto ni mueve cuentas)
 - void_transaction {id}  anula (se recupera con undo)
 - undo {id?}  deshace el último cambio (o el de esa tx)
 - set_balance {account, amount}  concilia con el saldo real que dice el usuario
@@ -64,11 +66,16 @@ Cómo trabajar:
 - Texto plano en reply, sin markdown ni HTML.
 - Jerga: "bs", "bolos", "bolívares" = VES; "dólares", "verdes", "$", "dls" = USD; "usdt" = USDT. "mil"/"lucas" = miles ("5 lucas" = 5000, casi siempre Bs). "pago móvil" = cuenta bancaria (mercantil o bdv; si no dice cuál, account null). "efectivo" = cash_usd o cash_ves según moneda. "Venezuela", "Banco de Venezuela", "el Venezuela" = bdv. "zelle" = zelle (USD). "tarjeta" (sola), "la Binance", "spot", "funding" = binance.
 - "Tarjeta de crédito" NO es una cuenta: pagarla/abonarla/una cuota es saldar deuda → expense con category "Deudas › Tarjeta de crédito" (otras deudas → "Deudas"), account = de dónde salió el dinero, merchant = el banco emisor si lo dice.
+- Pagos de deudas: si un gasto paga/abona/es cuota de una de las "Deudas de Randy" de abajo (por nombre, acreedor o contexto: "le pagué a Juan", "abono del préstamo", "cuota de la tarjeta") → ese gasto lleva debt_id de esa deuda. Si no calza con ninguna, debt_id null. Si hay dos posibles, pregunta.
+- Deuda nueva ("le debo 200$ a Juan", "me prestaron 50 verdes", "saqué 300$ en la tarjeta de crédito") → add_debt; name corto que la identifique ("Préstamo de Juan"). Nunca la registres como gasto.
 - occurred_at en hora local sin zona ("ayer", "anoche", "el lunes" relativos a ahora); null si no lo dice. merchant: el lugar o a quién se pagó tal como lo dice. category: exactamente una ruta de la lista o null.
+- justification: para qué/por qué fue, si el mensaje lo dice ("medicinas para mamá", "regalo de cumple de Ana", "cena con los del trabajo"), en pocas palabras; null si no lo dice (no lo inventes). Si luego explica para qué fue un gasto ya anotado → edit_transaction con justification.
 
 Cuentas (código, moneda, saldo estimado):
 ${accts}
 Categorías: ${ctx.categories.join(' | ')}
+Deudas de Randy (#id nombre: le queda por pagar de total):
+${ctx.debts.join('\n') || '(ninguna)'}
 Últimas transacciones (#id):
 ${ctx.recent.join('\n') || '(ninguna)'}
 Prompt pendiente del bot: ${ctx.pending ?? '(ninguno)'}
@@ -123,6 +130,7 @@ export function parseLocalDate(s: unknown, now: Date): Date {
   return Number.isNaN(d.getTime()) || d.getTime() > now.getTime() + 3600e3 ? now : d;
 }
 
+const posInt = (v: unknown) => { const n = Number(String(v ?? '').replace('#', '')); return Number.isInteger(n) && n > 0 ? n : null; };
 const str = (v: unknown) => (typeof v === 'string' && v.trim() && v !== 'null' ? v.trim() : null);
 
 function normItem(raw: any, codes: string[], now: Date, accountCurrency: Map<string, string>): Item {
@@ -133,6 +141,7 @@ function normItem(raw: any, codes: string[], now: Date, accountCurrency: Map<str
     ...(raw?.type === 'income' || raw?.type === 'expense' ? { type: raw.type } : {}),
     amount: parseAmount(raw?.amount), currency, account, merchant: str(raw?.merchant),
     category: str(raw?.category), occurredAt: parseLocalDate(raw?.occurred_at, now), note: str(raw?.note),
+    justification: str(raw?.justification), debtId: posInt(raw?.debt_id),
   };
 }
 
@@ -145,9 +154,10 @@ export function normalizeIntent(raw: any, ctx: { now: Date; accounts: { code: st
   if (raw?.patch && typeof raw.patch === 'object') {
     const p = raw.patch, full = normItem(p, codes, ctx.now, cur);
     patch = {};
-    for (const k of ['amount', 'currency', 'account', 'merchant', 'category', 'note'] as const)
+    for (const k of ['amount', 'currency', 'account', 'merchant', 'category', 'note', 'justification'] as const)
       if (p[k] != null && full[k] != null) (patch as any)[k] = full[k];
     if (p.occurred_at) patch.occurredAt = full.occurredAt;
+    if (full.debtId) patch.debtId = full.debtId;
   }
   const bAmount = parseAmount(raw?.balance?.amount);
   const needs = new Set<string>();
@@ -158,10 +168,10 @@ export function normalizeIntent(raw: any, ctx: { now: Date; accounts: { code: st
       if (!it.category && intent === 'add_expense') needs.add('category');
     }
   const c = Number(raw?.confidence);
-  const tid = Number(raw?.target_tx_id);
+  const tid = posInt(raw?.target_tx_id);
   return {
     intent, items, patch,
-    targetTxId: Number.isInteger(tid) && tid > 0 ? tid : null,
+    targetTxId: tid,
     balance: bAmount != null ? { account: normAccount(raw?.balance?.account, codes, null), amount: bAmount } : null,
     confidence: Number.isFinite(c) ? Math.min(1, Math.max(0, c)) : 0.5,
     needs: [...needs],

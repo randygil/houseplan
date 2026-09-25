@@ -40,15 +40,18 @@ test('normalizeIntent: gasto multi-item, monedas y cuentas por alias', () => {
     items: [
       { amount: 350, currency: 'bs', account: 'Mercantil', merchant: 'panadería', category: 'Comida › Panadería', occurred_at: '2026-09-22T08:30' },
       { amount: '20', currency: 'verdes', account: 'efectivo', merchant: 'gasolina', category: null },
-      { amount: '5 lucas', currency: null, account: 'pago móvil', merchant: 'farmacia', category: 'Salud' },
+      { amount: '5 lucas', currency: null, account: 'pago móvil', merchant: 'farmacia', category: 'Salud', justification: ' medicinas de mamá ', debt_id: null },
+      { amount: 50, currency: 'USD', account: 'zelle', merchant: 'Juan', category: 'Deudas', debt_id: '#3' },
     ],
   }, { now, accounts });
   assert.equal(p.intent, 'add_expense');
   assert.equal(p.confidence, 1);
-  assert.deepEqual(p.items.map((i) => [i.amount, i.currency, i.account]), [[350, 'VES', 'mercantil'], [20, 'USD', 'cash_usd'], [5000, null, null]]);
+  assert.deepEqual(p.items.map((i) => [i.amount, i.currency, i.account]), [[350, 'VES', 'mercantil'], [20, 'USD', 'cash_usd'], [5000, null, null], [50, 'USD', null]]);
   assert.deepEqual(p.needs.sort(), ['account', 'category']);
   assert.equal(p.items[0].occurredAt.toISOString(), '2026-09-22T12:30:00.000Z');
   assert.equal(p.items[1].occurredAt, now);
+  assert.deepEqual(p.items.map((i) => i.justification), [null, null, 'medicinas de mamá', null]);
+  assert.deepEqual(p.items.map((i) => i.debtId), [null, null, null, 3]);
 });
 
 test('normalizeIntent: moneda sale de la cuenta; edit con patch parcial; basura -> smalltalk', () => {
@@ -58,7 +61,8 @@ test('normalizeIntent: moneda sale de la cuenta; edit con patch parcial; basura 
 
   const e = normalizeIntent({ intent: 'edit', target_tx_id: '12', patch: { amount: 500, account: 'bdv', merchant: null } }, { now, accounts });
   assert.equal(e.targetTxId, 12);
-  assert.deepEqual(e.patch, { amount: 500, account: 'bdv' }); // currency only if said; the bot derives it from the account
+  assert.deepEqual(e.patch, { amount: 500, account: 'bdv' });
+  assert.deepEqual(normalizeIntent({ intent: 'edit', patch: { debt_id: 3 } }, { now, accounts }).patch, { debtId: 3 }); // currency only if said; the bot derives it from the account
 
   const b = normalizeIntent({ intent: 'set_balance', balance: { account: 'mercantil', amount: '8.400' } }, { now, accounts });
   assert.deepEqual(b.balance, { account: 'mercantil', amount: 8400 });
@@ -72,13 +76,14 @@ test('normalizeIntent: moneda sale de la cuenta; edit con patch parcial; basura 
 
 test('buildAgentPrompt: contexto corto (hora local, cuentas, turnos, txs, pendiente)', () => {
   const recent = [txLine({ id: 7, type: 'expense', status: 'confirmed', occurredAt: new Date('2026-09-22T12:30:00Z'), amount: '350', currency: 'VES', merchant: 'panadería', category: { name: 'Panadería' }, fromAccount: { code: 'mercantil' } })];
-  const s = buildAgentPrompt({ now, accounts, categories: ['Comida', 'Comida › Panadería'], turns: [{ role: 'user', text: 'gasté 350 en pan' }], recent, pending: 'reconcile {"expected":9300}' }, 'TOOLS_DOC');
+  const s = buildAgentPrompt({ now, accounts, categories: ['Comida', 'Comida › Panadería'], turns: [{ role: 'user', text: 'gasté 350 en pan' }], recent, debts: ['- #3 Préstamo de Juan: 150 de 200 USD'], pending: 'reconcile {"expected":9300}' }, 'TOOLS_DOC');
   assert.match(s, /Ahora: 2026-09-22T10:00/);
   assert.match(s, /mercantil \(Mercantil, VES\): ~8400/);
   assert.match(s, /#7 2026-09-22T08:30 expense 350 VES · panadería · Panadería · mercantil · confirmed/);
   assert.match(s, /Randy: gasté 350 en pan/);
   assert.match(s, /reconcile \{"expected":9300\}/);
   assert.match(s, /TOOLS_DOC/);
+  assert.match(s, /Deudas de Randy.*\n- #3 Préstamo de Juan: 150 de 200 USD/);
   assert.match(s, /add_transactions .*show/s);
 });
 

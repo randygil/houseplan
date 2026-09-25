@@ -27,16 +27,20 @@ export type Transaction = {
   justification: string | null
   source: string
   bagId: number | null
+  debtId: number | null
   confidence: number | null
   createdAt: string
   updatedAt: string
 }
-export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null }
+export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt?: { id: number; name: string } | null }
+
+/** What Randy owes; payments are expenses linked by debtId. `paid`/`remaining` in the debt's currency. */
+export type Debt = { id: number; name: string; currency: string; amount: number; note: string | null; createdAt: string; paid: number; remaining: number; payments: number }
 
 export type TxInput = Partial<{
   type: TxType; status: 'pending' | 'confirmed'; occurredAt: string; amount: number; currency: string
   fromAccountId: number; toAccountId: number; toAmount: number; categoryId: number
-  merchant: string; note: string; justification: string; source: string
+  merchant: string; note: string; justification: string; source: string; debtId: number | null
 }>
 
 export type Overview = {
@@ -122,5 +126,8 @@ export const api = {
   heatmap: (q: { from: string; to: string }) => req<HeatCell[]>('/insights/heatmap' + qs(q)),
   rates: (q: { from: string; to: string }) => req<RatePoint[]>('/insights/rates' + qs(q)),
   bags: (openOnly = false) => req<BagStatus[]>('/bags' + qs({ openOnly: openOnly ? 1 : undefined })),
+  debts: () => req<Debt[]>('/debts'),
+  createDebt: (d: { name: string; amount: number; currency: string; note?: string }) => post<Debt>('/debts', d),
+  deleteDebt: (id: number) => req<unknown>(`/debts/${id}`, { method: 'DELETE' }),
   ask: (question: string) => post<AskAnswer>('/ask', { question }),
 }

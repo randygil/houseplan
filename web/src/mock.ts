@@ -1,5 +1,5 @@
 // Dev-only fixtures (VITE_MOCK=1). Shapes follow CONTRACTS.md; not bundled in production builds.
-import type { Account, BagStatus, Category, TxView } from './api'
+import type { Account, BagStatus, Category, Debt, TxView } from './api'
 
 let seed = 7
 const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
@@ -65,12 +65,16 @@ txs.push(tx(900, new Date(now - 2 * 36e5), {
   source: 'reconcile', merchant: null, justified: false, note: 'Diferencia de conciliación',
 }))
 txs.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+let debts: Debt[] = [
+  { id: 1, name: 'Préstamo de Juan', currency: 'USD', amount: 200, note: null, createdAt: new Date(now - 20 * 864e5).toISOString(), paid: 50, remaining: 150, payments: 1 },
+  { id: 2, name: 'Tarjeta Mercantil', currency: 'VES', amount: 40000, note: null, createdAt: new Date(now - 40 * 864e5).toISOString(), paid: 40000, remaining: 0, payments: 3 },
+]
 
 function tx(id: number, at: Date, p: Partial<TxView>): TxView {
   return {
     id, type: 'expense', status: 'confirmed', occurredAt: at.toISOString(), amount: 0, currency: 'USD', amountUsd: null,
     fxRate: null, fxSource: null, fromAccountId: null, toAccountId: null, toAmount: null, categoryId: null, merchant: null,
-    note: null, justified: true, justification: null, source: 'manual_text', bagId: null, confidence: null,
+    note: null, justified: true, justification: null, source: 'manual_text', bagId: null, debtId: null, confidence: null,
     createdAt: at.toISOString(), updatedAt: at.toISOString(), category: null, fromAccount: null, toAccount: null, ...p,
   }
 }
@@ -172,6 +176,9 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
     })
     return q.get('openOnly') ? bags.filter((b) => b.remaining > 0) : bags
   }
+  if (p === '/debts' && m === 'GET') return debts
+  if (p === '/debts') { const d: Debt = { id: debts.length + 1, createdAt: new Date().toISOString(), note: null, ...body, paid: 0, remaining: body.amount, payments: 0 }; debts.push(d); return d }
+  if ((r = p.match(/^\/debts\/(\d+)$/))) { debts = debts.filter((d) => d.id !== +r![1]); return null }
   if (p === '/ask') {
     const qn = String(body.question).toLowerCase()
     if (qn.includes('ayer')) return {

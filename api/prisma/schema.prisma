@@ -111,6 +111,8 @@ model Transaction {
   rawEvent      RawEvent? @relation(fields: [rawEventId], references: [id])
   bagId         Int?
   bag           Bag?      @relation(fields: [bagId], references: [id])
+  debtId        Int?      /// expense that pays (part of) this debt
+  debt          Debt?     @relation(fields: [debtId], references: [id])
   confidence    Float?
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt @db.Timestamptz
@@ -121,6 +123,20 @@ model Transaction {
   @@index([occurredAt])
   @@index([status, type])
   @@map("transactions")
+}
+
+/// What Randy owes. Payments are expenses with debtId; what's left is computed (DebtsService).
+model Debt {
+  id        Int      @id @default(autoincrement())
+  name      String   /// "Préstamo de Juan", "Tarjeta Mercantil"
+  currency  String   /// VES | USD | USDT
+  amount    Decimal  @db.Decimal(24, 8) /// owed at the start
+  note      String?
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  payments Transaction[]
+
+  @@map("debts")
 }
 
 model TransactionVersion {

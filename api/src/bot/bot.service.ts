@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import { AskAnswer, shape } from '../ai/ask.service';
 import { Tools } from '../ai/agent';
 import { EmbeddingsService } from '../ai/embeddings.service';
-import { caracasIso, normAccount, normalizeIntent, Parsed, parseAmount, parseLocalDate } from '../ai/intent';
+import { caracasIso, normAccount, normCurrency, normalizeIntent, Parsed, parseAmount, parseLocalDate } from '../ai/intent';
 import { IntentService } from '../ai/intent.service';
 import { TranscribeService } from '../ai/transcribe.service';
 import { BinanceService } from '../binance/binance.service';
@@ -12,6 +12,7 @@ import { AuthService } from '../http/auth.service';
 import { InsightsService } from '../insights/insights.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
+import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, TxInput, TxView } from '../ledger/ledger.service';
 import { cb, dayLabel, esc, hhmm, money, needsJustification, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
@@ -53,6 +54,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     private intent: IntentService,
     private emb: EmbeddingsService,
     private transcriber: TranscribeService,
+    private debts: DebtsService,
   ) {
     // Allowlist first, in the constructor, so it precedes every handler (NudgesService registers its own).
     this.bot?.use(async (ctx, next) => { if (ctx.from?.id === this.chatId) await next(); });
@@ -302,6 +304,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     return {
       add_transactions: async (a) => this.addItems(await parse({ intent: 'add_expense', items: a.items, confidence: a.confidence }), source),
       add_transfer: (a) => this.addTransfer(a, source),
+      add_debt: (a) => this.addDebt(a),
       edit_transaction: async (a) => ok(this.editTx(await parse({ intent: 'edit', target_tx_id: a.id, patch: a }))),
       void_transaction: (a) => ok(this.remove(Number(a.id) || null)),
       undo: (a) => ok(this.undo(Number(a.id) || null)),
@@ -364,14 +367,18 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       const tx = await this.ledger.create({
         type, status: 'pending', occurredAt: it.occurredAt, amount: it.amount, currency: it.currency ?? 'VES',
         ...(type === 'income' ? { toAccountId: it.accountId ?? undefined } : { fromAccountId: it.accountId ?? undefined }),
-        categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined,
-        source, confidence: p.confidence,
+        categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined, justification: it.justification ?? undefined,
+        debtId: it.debtId ?? undefined, source, confidence: p.confidence,
       });
       const auto = p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
       if (auto) await this.ledger.confirm(tx.id);
       await this.showTx(tx.id);
       if (auto) await this.afterConfirm(tx.id);
-      out.push({ id: tx.id, type, status: auto ? 'confirmed' : 'pending', amount: it.amount, currency: it.currency, account: it.account, category: it.categoryPath });
+      const debt = it.debtId ? await this.debts.get(it.debtId) : null;
+      out.push({
+        id: tx.id, type, status: auto ? 'confirmed' : 'pending', amount: it.amount, currency: it.currency, account: it.account, category: it.categoryPath,
+        ...(debt && { debt: { id: debt.id, name: debt.name, remaining: `${+debt.remaining.toFixed(2)} ${debt.currency}` } }),
+      });
     }
     return out;
   }
@@ -396,6 +403,14 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     return { id: tx.id, from: from.code, to: to.code, amount, toAmount };
   }
 
+  async addDebt(a: any) {
+    const name = typeof a.name === 'string' ? a.name.trim() : '', amount = parseAmount(a.amount), currency = normCurrency(a.currency);
+    if (!name || amount == null || !currency) throw new Error('faltan name, amount o currency (VES|USD|USDT): pregúntalo');
+    const d = await this.debts.create({ name, amount, currency, note: typeof a.note === 'string' && a.note.trim() ? a.note.trim() : undefined });
+    await this.send(`💳 Deuda anotada: <b>${esc(name)}</b> · ${money(amount, currency)}`);
+    return { id: d.id, name, amount, currency };
+  }
+
   private async resolveTarget(id: number | null) {
     return id ?? (await this.ledger.recent(1))[0]?.id ?? null;
   }
@@ -412,6 +427,8 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (q.currency) patch.currency = q.currency;
     if (q.merchant) patch.merchant = q.merchant;
     if (q.note) patch.note = q.note;
+    if (q.justification) patch.justification = q.justification;
+    if (q.debtId && (await this.debts.get(q.debtId))) patch.debtId = q.debtId;
     if (q.occurredAt) patch.occurredAt = q.occurredAt;
     let moved = false;
     if (q.account) {

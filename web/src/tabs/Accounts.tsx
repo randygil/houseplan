@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, num, type Balance } from '../api'
 import { Loading, Sheet, ago, btnCls, fmtCur, inputCls, parseNum, useLoad, useMoney } from '../ui'
+import Debts from './Debts'
 
 export default function Accounts() {
   const { data, error, reload } = useLoad(api.accounts)
@@ -34,6 +35,7 @@ export default function Accounts() {
         })}
       </div>
       <Reconcile b={rec} onClose={() => setRec(null)} onDone={reload} />
+      <Debts />
     </div>
   )
 }

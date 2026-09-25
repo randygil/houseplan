@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../db/prisma.service';
 import { CategoriesService } from '../ledger/categories.service';
+import { DebtsService } from '../ledger/debts.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { runAgent, Tools } from './agent';
 import { AskService, READ_TOOLS, TOOLS } from './ask.service';
@@ -17,12 +18,13 @@ export class IntentService {
     private ledger: LedgerService,
     private cats: CategoriesService,
     private asker: AskService,
+    private debts: DebtsService,
   ) {}
 
   /** Agent turn: context + read tools (AskService) + the bot's action tools. Simple orders cost one model call. */
   async agent(text: string, actions: Tools) {
     const now = new Date();
-    const [accounts, categories, turns, recent, pending] = await Promise.all([
+    const [accounts, categories, turns, recent, pending, debts] = await Promise.all([
       this.ledger.balances(),
       this.cats.list(),
       this.db.chatTurn.findMany({ orderBy: { id: 'desc' }, take: 9 }), // includes the current user turn
@@ -31,10 +33,12 @@ export class IntentService {
         where: { sentAt: { gte: new Date(now.getTime() - 24 * 3600e3) }, answeredAt: null, cancelledAt: null },
         orderBy: { sentAt: 'desc' },
       }),
+      this.debts.list(),
     ]);
     const prompt = buildAgentPrompt({
       now, accounts, categories: categories.map((c) => c.path),
       turns: turns.reverse().slice(0, -1), recent: recent.map(txLine),
+      debts: debts.filter((d) => d.remaining > 0).map((d) => `- #${d.id} ${d.name}: ${+d.remaining.toFixed(2)} de ${d.amount} ${d.currency}`),
       pending: pending ? `${pending.kind} ${JSON.stringify(pending.payload)}` : null,
     }, TOOLS);
     const tools: Tools = { ...Object.fromEntries(READ_TOOLS.map((t) => [t, (a: any) => this.asker.tool(t, a)])), ...actions };
@@ -44,15 +48,17 @@ export class IntentService {
 
   /** Classification: merchant rule first (deterministic), LLM's category second. Rule also fills a missing account. */
   async resolve(items: Item[]): Promise<ResolvedItem[]> {
-    const accounts = await this.ledger.balances();
-    const cats = await this.cats.list();
+    const [accounts, cats, debts] = await Promise.all([this.ledger.balances(), this.cats.list(), this.debts.list()]);
     return Promise.all(items.map(async (it) => {
+      const debtId = debts.some((d) => d.id === it.debtId) ? it.debtId : null;
       const rule = it.merchant ? await this.cats.ruleFor(it.merchant) : null;
-      const cat = rule ? cats.find((c) => c.id === rule.categoryId) : it.category ? await this.cats.byPath(it.category) : null;
+      const byPath = async (p: string | null) => (p ? this.cats.byPath(p) : null);
+      // a debt payment without a (valid) category lands in "Deudas"
+      const cat = rule ? cats.find((c) => c.id === rule.categoryId) : (await byPath(it.category)) ?? (debtId ? await byPath('Deudas') : null);
       let acc = accounts.find((a) => a.code === it.account);
       if (!acc && rule?.accountId) acc = accounts.find((a) => a.accountId === rule.accountId);
       return {
-        ...it, currency: it.currency ?? acc?.currency ?? null,
+        ...it, debtId, currency: it.currency ?? acc?.currency ?? null,
         accountId: acc?.accountId ?? null, categoryId: cat?.id ?? null,
         categoryPath: cat ? cats.find((c) => c.id === cat.id)?.path ?? cat.name : null, hasRule: !!rule,
       };

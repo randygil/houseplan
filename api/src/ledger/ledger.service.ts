@@ -1,7 +1,7 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../db/prisma.service';
 import { FxService } from '../fx/fx.service';
-import type { Account, Category, Prisma, Transaction } from '../generated/prisma/client';
+import type { Account, Category, Debt, Prisma, Transaction } from '../generated/prisma/client';
 import { BagsService } from './bags.service';
 import { CategoriesService } from './categories.service';
 
@@ -9,20 +9,20 @@ export type TxInput = {
   type: 'transfer' | 'expense' | 'income' | 'fee'; status?: 'pending' | 'confirmed';
   occurredAt: Date; amount: number; currency: string;
   fromAccountId?: number; toAccountId?: number; toAmount?: number;
-  categoryId?: number; merchant?: string; note?: string; justification?: string;
+  categoryId?: number; merchant?: string; note?: string; justification?: string; debtId?: number;
   source: string; rawEventId?: number; confidence?: number; fxRate?: number; fxSource?: string;
 };
-export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null };
+export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt: Debt | null };
 type Db = Prisma.TransactionClient;
 type Patch = Omit<Partial<TxInput>, 'status'> & { status?: string };
 
-export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true } as const;
+export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true, debt: true } as const;
 const isUsd = (c: string) => c === 'USD' || c === 'USDT';
 // Changing any of these re-runs FX + bag allocation.
 const MONEY_KEYS = ['type', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'occurredAt', 'fxRate'] as const;
 const FIELDS = [
   'type', 'status', 'occurredAt', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId',
-  'merchant', 'note', 'justification', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
+  'merchant', 'note', 'justification', 'debtId', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
 ] as const;
 
 @Injectable()
@@ -40,7 +40,7 @@ export class LedgerService {
     if (!categoryId && input.merchant) categoryId = (await this.categories.ruleFor(input.merchant))?.categoryId;
     return this.db.$transaction(async (db) => {
       const row = await db.transaction.create({
-        data: { ...pick(input), categoryId, status: input.status ?? 'pending', justified: !!input.justification, fxRate: null, fxSource: null },
+        data: { ...pick(input), categoryId, status: input.status ?? 'pending', justified: !!(input.justification || input.debtId), fxRate: null, fxSource: null },
       });
       await db.transactionVersion.create({ data: { transactionId: row.id, snapshot: {}, reason: 'create' } });
       return db.transaction.update({ where: { id: row.id }, data: await this.money(db, row, input, preferBagId) });
@@ -162,6 +162,7 @@ export class LedgerService {
     await db.transactionVersion.create({ data: { transactionId: id, snapshot: toJson(prev), reason } });
     const data: Prisma.TransactionUncheckedUpdateInput = { ...pick(patch) };
     if ('justification' in patch) data.justified = !!patch.justification;
+    if (patch.debtId) data.justified = true;
     const voidFlip = 'status' in patch && (patch.status === 'void') !== (prev.status === 'void');
     const moneyChanged = voidFlip || MONEY_KEYS.some((k) => k in patch && String(patch[k] ?? null) !== String(prev[k] ?? null));
     if (moneyChanged) {

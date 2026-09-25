@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, CallHandler, Controller, ExecutionContext, Get, Injectable, NestInterceptor,
+  BadRequestException, Body, CallHandler, Controller, Delete, ExecutionContext, Get, Injectable, NestInterceptor,
   NotFoundException, Param, ParseIntPipe, Patch, Post, Query, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { map } from 'rxjs';
@@ -8,6 +8,7 @@ import { Prisma } from '../generated/prisma/client';
 import { InsightsService } from '../insights/insights.service';
 import { BagsService } from '../ledger/bags.service';
 import { CategoriesService } from '../ledger/categories.service';
+import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, type TxInput } from '../ledger/ledger.service';
 import { AuthGuard } from './auth.service';
 
@@ -43,7 +44,7 @@ const oneOf = <T extends string>(v: unknown, opts: readonly T[], name: string, d
 };
 
 const TYPES = ['transfer', 'expense', 'income', 'fee'] as const;
-const NUMERIC = ['amount', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId', 'rawEventId', 'confidence', 'fxRate'] as const;
+const NUMERIC = ['amount', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId', 'debtId', 'rawEventId', 'confidence', 'fxRate'] as const;
 const STRINGS = ['currency', 'merchant', 'note', 'justification', 'source', 'fxSource'] as const;
 
 function txBody(b: any, partial: boolean): Partial<TxInput> {
@@ -75,6 +76,7 @@ export class ApiController {
     private categories: CategoriesService,
     private insights: InsightsService,
     private asker: AskService,
+    private debts: DebtsService,
   ) {}
 
   @Get('overview') overview() { return this.insights.overview(); }
@@ -138,6 +140,22 @@ export class ApiController {
   bagsList(@Query('openOnly') openOnly?: string, @Query('bagId') bagId?: string) {
     return this.insights.bagStatus({ openOnly: openOnly === '1' || openOnly === 'true', bagId: num(bagId, 'bagId') });
   }
+
+  @Get('debts') debtsList() { return this.debts.list(); }
+
+  @Post('debts')
+  createDebt(@Body() b: { name?: unknown; amount?: unknown; currency?: unknown; note?: unknown }) {
+    const name = typeof b?.name === 'string' ? b.name.trim() : '';
+    const amount = num(b?.amount, 'amount');
+    if (!name) throw new BadRequestException('name required');
+    if (!(Number(amount) > 0)) throw new BadRequestException('amount > 0 required');
+    return this.debts.create({
+      name, amount: amount!, currency: oneOf(b.currency, ['VES', 'USD', 'USDT'] as const, 'currency'),
+      note: typeof b.note === 'string' && b.note.trim() ? b.note.trim() : undefined,
+    });
+  }
+
+  @Delete('debts/:id') removeDebt(@Param('id', ParseIntPipe) id: number) { return this.debts.remove(id); }
 
   @Post('ask')
   ask(@Body() b: { question?: unknown }) {
