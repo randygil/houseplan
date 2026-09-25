@@ -12,6 +12,7 @@ const accounts: Account[] = [
   { id: 4, code: 'bdv', name: 'Banco de Venezuela', currency: 'VES', kind: 'ledger' },
   { id: 5, code: 'cash_usd', name: 'Efectivo USD', currency: 'USD', kind: 'ledger' },
   { id: 6, code: 'cash_ves', name: 'Efectivo Bs', currency: 'VES', kind: 'ledger' },
+  { id: 7, code: 'zelle', name: 'Zelle', currency: 'USD', kind: 'ledger' },
 ]
 const cats: Category[] = [
   { id: 1, name: 'Comida', parentId: null, emoji: '🍔', path: 'Comida' },

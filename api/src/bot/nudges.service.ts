@@ -89,7 +89,11 @@ export class NudgesService implements OnModuleInit {
 
     // Cap only the repetitive reminders; event prompts (a P2P/card/Pay that just happened) always go out.
     let budget = Number(process.env.NUDGE_DAILY_CAP ?? 4) - await this.db.pendingPrompt.count({ where: { sentAt: { gte: startOfDay(now) }, kind: { in: CAPPED } } });
-    const others = due.filter((p) => p.kind !== 'bag_followup').sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
+    // One reconcile per account (every P2P SELL queues one): keep the newest, drop the rest.
+    const rec = due.filter((p) => p.kind === 'reconcile');
+    const dupes = rec.filter((p) => rec.some((q) => q.refId === p.refId && q.id > p.id));
+    await cancel(dupes.map((p) => p.id));
+    const others = due.filter((p) => p.kind !== 'bag_followup' && !dupes.includes(p)).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
     for (const p of others) {
       const capped = CAPPED.includes(p.kind);
       if (capped && budget <= 0) continue;
@@ -129,6 +133,9 @@ export class NudgesService implements OnModuleInit {
       case 'reconcile': {
         const acc = p.refId ? await this.db.account.findUnique({ where: { id: p.refId } }) : null;
         if (!acc) { await this.db.pendingPrompt.update({ where: { id: p.id }, data: { cancelledAt: now } }); return false; }
+        // Payload's expected is a snapshot from when the trade happened; ask about today's balance instead.
+        pl.expected = (await this.ledger.balances()).find((b) => b.accountId === acc.id)?.balance ?? pl.expected;
+        await this.db.pendingPrompt.update({ where: { id: p.id }, data: { payload: pl } });
         text = `🏦 ${esc(acc.name)} debería tener ~${money(Math.round(Number(pl.expected)), acc.currency)}. ¿Es así?`;
         k.text('✅ Sí', cb('n', 'rok', p.id)).text('No, tengo…', cb('n', 'rno', p.id));
         break;

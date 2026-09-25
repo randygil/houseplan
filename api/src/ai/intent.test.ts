@@ -93,7 +93,8 @@ test('sync flag only when explicitly true', () => {
 });
 
 test('normAccount: "cuenta en Venezuela" = bdv; tarjeta de crédito no es Binance', () => {
-  const codes = ['binance', 'mercantil', 'bdv', 'cash_usd', 'cash_ves'];
+  const codes = ['binance', 'mercantil', 'bdv', 'cash_usd', 'cash_ves', 'zelle'];
+  assert.equal(normAccount('por Zelle', codes, 'USD'), 'zelle');
   assert.equal(normAccount('mi cuenta en Venezuela', codes, 'VES'), 'bdv');
   assert.equal(normAccount('tarjeta', codes, null), 'binance');
   assert.equal(normAccount('tarjeta de crédito', codes, 'VES'), null);

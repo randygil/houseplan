@@ -11,6 +11,7 @@ const accounts = [
   { code: 'mercantil', name: 'Mercantil', currency: 'VES', kind: 'ledger', payMethodAliases: ['Mercantil', 'BancoMercantil', 'Banco Mercantil'] },
   { code: 'bdv', name: 'BDV', currency: 'VES', kind: 'ledger', payMethodAliases: ['BDV', 'Banco de Venezuela', 'BancoDeVenezuela', 'BancodeVenezuela'] },
   { code: 'cash_usd', name: 'Efectivo USD', currency: 'USD', kind: 'ledger', payMethodAliases: [] },
+  { code: 'zelle', name: 'Zelle', currency: 'USD', kind: 'ledger', payMethodAliases: [] },
   { code: 'cash_ves', name: 'Efectivo Bs', currency: 'VES', kind: 'ledger', payMethodAliases: [] },
 ];
 
