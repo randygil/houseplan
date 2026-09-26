@@ -13,7 +13,7 @@ import { InsightsService } from '../insights/insights.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
 import { DebtsService } from '../ledger/debts.service';
-import { LedgerService, TxInput, TxView } from '../ledger/ledger.service';
+import { LedgerService, missingAccount, TxInput, TxView } from '../ledger/ledger.service';
 import { currencyIn, monthKey, PlanService, sameMoney, type EntryView } from '../ledger/plan.service';
 import { amt, cb, dayLabel, debtsText, esc, hhmm, money, paidText, parseWhen, planDueText, planText, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
@@ -214,14 +214,19 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         .text('📝 Nota', cb('t', 'f', tx.id, 'note')).text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).row()
         .text('🗑️ Anular', cb('t', 'no', tx.id)).text('↩️ Volver', cb('t', 'v', tx.id));
     if (tx.status === 'confirmed') return k.text('↩️ Deshacer', cb('t', 'un', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
-    return k.text('✅ Ok', cb('t', 'ok', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id)).row()
+    // no account = nothing to confirm yet: the first button picks it
+    return k.text(hasAcc ? '✅ Ok' : '🏦 Elegir cuenta', cb('t', hasAcc ? 'ok' : 'acs', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id)).row()
       .text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).text('❌ Cancelar', cb('t', 'no', tx.id));
   }
 
   private async onTxButton(act: string, id: number, arg: string | undefined, msgId?: number) {
     const n = Number(arg);
     switch (act) {
-      case 'ok': await this.ledger.confirm(id); await this.showTx(id, { msgId }); return this.afterConfirm(id);
+      case 'ok': {
+        const tx = await this.ledger.get(id);
+        if (tx && missingAccount(tx)) return this.showTx(id, { msgId, mode: 'acc', prefix: '🏦 Antes de confirmar, ¿de qué cuenta salió?' });
+        await this.ledger.confirm(id); await this.showTx(id, { msgId }); return this.afterConfirm(id);
+      }
       case 'no': await this.ledger.void(id); return this.showTx(id, { msgId });
       case 'ed': return this.showTx(id, { msgId, mode: 'edit' });
       case 'v': return this.showTx(id, { msgId, mode: 'view' });
@@ -726,18 +731,24 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   /** Bulk "empezar de 0": resolve every pending tx, cancel queued nudges, close open bags. */
   private async bulkPending(act: 'ok' | 'void', sure: boolean, msgId?: number) {
     const n = await this.db.transaction.count({ where: { status: 'pending' } });
+    const ready = await this.db.transaction.count({ where: { status: 'pending', ...HAS_ACCOUNT } });
     if (!sure) {
-      const what = act === 'ok' ? `confirmar los ${n} como están` : `descartar los ${n} (no cuentan en reportes)`;
+      const what = act === 'ok'
+        ? `confirmar los ${ready} que tienen cuenta${n > ready ? ` (los ${n - ready} sin cuenta quedan pendientes)` : ''}`
+        : `descartar los ${n} (no cuentan en reportes)`;
       const k = new InlineKeyboard().text('Sí, hazlo', `p:${act}:y`).text('No', 'p:no');
       return msgId ? this.edit(msgId, `¿Seguro? Voy a ${what}, cancelar los recordatorios y cerrar las bolsas abiertas.`, k) : undefined;
     }
     // ponytail: bulk skips transaction_versions/bag re-allocation — bags are closed below anyway
     await this.db.$transaction([
-      this.db.transaction.updateMany({ where: { status: 'pending' }, data: act === 'ok' ? { status: 'confirmed' } : { status: 'void' } }),
+      act === 'ok'
+        ? this.db.transaction.updateMany({ where: { status: 'pending', ...HAS_ACCOUNT }, data: { status: 'confirmed' } })
+        : this.db.transaction.updateMany({ where: { status: 'pending' }, data: { status: 'void' } }),
       this.db.pendingPrompt.updateMany({ where: { answeredAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } }),
       this.db.bag.updateMany({ where: { closedAt: null }, data: { closedAt: new Date() } }),
     ]);
-    const done = `${act === 'ok' ? '✅ Confirmé' : '🗑️ Descarté'} ${n} movimientos. Empiezas de 0 🎉\nSi quieres, usa /conciliar para poner el saldo real de tus bancos hoy.`;
+    const left = act === 'ok' && n > ready ? `\n🏦 ${n - ready} sin cuenta siguen en /pendientes: elige de dónde salieron.` : '';
+    const done = `${act === 'ok' ? `✅ Confirmé ${ready}` : `🗑️ Descarté ${n}`} movimientos. Empiezas de 0 🎉${left}\nSi quieres, usa /conciliar para poner el saldo real de tus bancos hoy.`;
     return msgId ? this.edit(msgId, done) : this.send(done);
   }
 
@@ -815,6 +826,15 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (msgId) await this.edit(msgId, await this.ajustesText(), new InlineKeyboard().text(v ? '🔕 Quitar resumen diario' : '🔔 Activar resumen diario', cb('s', 'daily')));
   }
 }
+
+/** Prisma filter twin of `missingAccount`: rows that may be confirmed. */
+const HAS_ACCOUNT = {
+  OR: [
+    { type: { in: ['expense', 'fee'] }, fromAccountId: { not: null } },
+    { type: 'income', toAccountId: { not: null } },
+    { type: 'transfer', OR: [{ fromAccountId: { not: null } }, { toAccountId: { not: null } }] },
+  ],
+};
 
 /** Agent/ask answer -> Telegram HTML; table (or chart as rows) as a monospace block. */
 function answerHtml(r: AskAnswer) {

@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../db/prisma.service';
 import { FxService } from '../fx/fx.service';
 import type { Account, Category, Debt, PlanEntry, PlanItem, Prisma, Transaction } from '../generated/prisma/client';
@@ -17,6 +17,13 @@ export type TxView = Transaction & {
 };
 type Db = Prisma.TransactionClient;
 type Patch = Omit<Partial<TxInput>, 'status'> & { status?: string };
+
+/** Account a Bs expense lands on when nobody said which one (most pago móvil goes out of BDV). */
+export const DEFAULT_VES_ACCOUNT = 'bdv';
+/** A confirmed movement must say where the money came from / went to. */
+export const missingAccount = (t: { type: string; fromAccountId?: number | null; toAccountId?: number | null }) =>
+  t.type === 'income' ? !t.toAccountId : t.type === 'transfer' ? !t.fromAccountId && !t.toAccountId : !t.fromAccountId;
+export const NO_ACCOUNT = 'Falta la cuenta: elige de dónde salió el dinero antes de confirmar.';
 
 export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true, debt: true, planEntry: { include: { item: true } } } as const;
 const isUsd = (c: string) => c === 'USD' || c === 'USDT';
@@ -40,6 +47,9 @@ export class LedgerService {
   async create(input: TxInput, preferBagId?: number): Promise<Transaction> {
     let categoryId = input.categoryId;
     if (!categoryId && input.merchant) categoryId = (await this.categories.ruleFor(input.merchant))?.categoryId;
+    if ((input.type === 'expense' || input.type === 'fee') && !input.fromAccountId && input.currency === 'VES')
+      input = { ...input, fromAccountId: (await this.defaultAccount('VES'))?.id };
+    if (input.status === 'confirmed' && missingAccount(input)) throw new BadRequestException(NO_ACCOUNT);
     return this.db.$transaction(async (db) => {
       const row = await db.transaction.create({
         data: { ...pick(input), categoryId, status: input.status ?? 'pending', fxRate: null, fxSource: null },
@@ -57,6 +67,11 @@ export class LedgerService {
   }
 
   confirm(id: number) { return this.update(id, { status: 'confirmed' }); }
+
+  /** Where an account-less expense in `currency` goes by default (only Bs has one). */
+  defaultAccount(currency: string): Promise<Account | null> {
+    return currency === 'VES' ? this.db.account.findUnique({ where: { code: DEFAULT_VES_ACCOUNT } }) : Promise.resolve(null);
+  }
 
   async void(id: number): Promise<Transaction> {
     return (await this.db.$transaction((db) => this.apply(db, id, { status: 'void' }, 'void'))).tx;
@@ -161,6 +176,10 @@ export class LedgerService {
   /** Snapshot prev → version, patch row, redo FX/bags if money fields changed. */
   private async apply(db: Db, id: number, patch: Patch, reason: string) {
     const prev = await db.transaction.findUniqueOrThrow({ where: { id } });
+    // Only when this change confirms it or touches its accounts: old confirmed rows without one stay editable.
+    const next = { ...prev, ...pick(patch) };
+    if (next.status === 'confirmed' && ['status', 'type', 'fromAccountId', 'toAccountId'].some((k) => k in patch) && missingAccount(next))
+      throw new BadRequestException(NO_ACCOUNT);
     await db.transactionVersion.create({ data: { transactionId: id, snapshot: toJson(prev), reason } });
     const data: Prisma.TransactionUncheckedUpdateInput = { ...pick(patch) };
     const voidFlip = 'status' in patch && (patch.status === 'void') !== (prev.status === 'void');

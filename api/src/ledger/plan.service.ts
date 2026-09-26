@@ -332,6 +332,7 @@ export class PlanService {
     let acc = await this.db.account.findUnique({ where: { id: o.accountId ?? e.item.accountId ?? -1 } });
     const currency = o.currency ?? acc?.currency ?? e.currency;
     if (acc && !sameMoney(acc.currency, currency)) acc = null; // said "$" but the usual account is in Bs: let them pick
+    acc ??= await this.ledger.defaultAccount(currency);
     let amount = o.amount;
     if (amount == null) {
       const v = await this.entry(entryId);

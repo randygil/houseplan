@@ -265,7 +265,11 @@ function EntrySheet({ e, m, accounts, onClose, onChanged, onEditItem }: {
   const $ = useMoney()
   const acc = accounts.find((a) => a.accountId === e.accountId)
   const left = e.planned - e.spent > 0.005 ? e.planned - e.spent : e.planned
-  const [pay, setPay] = useState({ amount: String(Math.round(left * 100) / 100), currency: acc && acc.currency !== e.currency && !(acc.currency === 'USD' && e.currency === 'USDT') ? acc.currency : e.currency, accountId: e.accountId ? String(e.accountId) : '' })
+  // a Bs payment with no usual account goes out of BDV, same default as the ledger
+  const bdv = accounts.find((a) => a.code === 'bdv')
+  const defAcc = (c: string) => (e.accountId ? String(e.accountId) : c === 'VES' && bdv ? String(bdv.accountId) : '')
+  const cur0 = acc && acc.currency !== e.currency && !(acc.currency === 'USD' && e.currency === 'USDT') ? acc.currency : e.currency
+  const [pay, setPay] = useState({ amount: String(Math.round(left * 100) / 100), currency: cur0, accountId: defAcc(cur0) })
   const [planned, setPlanned] = useState(String(e.planned))
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -333,7 +337,7 @@ function EntrySheet({ e, m, accounts, onClose, onChanged, onEditItem }: {
               <select value={pay.currency} onChange={(x) => {
                 const c = x.target.value
                 const est = c === e.currency || (c !== 'VES' && e.currency !== 'VES') ? left : m.rate ? (c === 'VES' ? left * m.rate : left / m.rate) : left
-                setPay({ ...pay, currency: c, amount: String(Math.round(est * 100) / 100), accountId: accounts.find((a) => String(a.accountId) === pay.accountId && (a.currency === c || (c !== 'VES' && a.currency !== 'VES'))) ? pay.accountId : '' })
+                setPay({ ...pay, currency: c, amount: String(Math.round(est * 100) / 100), accountId: accounts.find((a) => String(a.accountId) === pay.accountId && (a.currency === c || (c !== 'VES' && a.currency !== 'VES'))) ? pay.accountId : c === 'VES' && bdv ? String(bdv.accountId) : '' })
               }} className={inputCls}>
                 {CURS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>

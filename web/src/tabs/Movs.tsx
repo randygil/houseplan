@@ -184,6 +184,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   }, [tx, accKey])
 
   if (!tx) return <Sheet open={false} onClose={onClose}>{null}</Sheet>
+  const canConfirm = !!v.accountId || (tx.type === 'transfer' && !!(tx.fromAccountId || tx.toAccountId))
 
   const run = async (fn: () => Promise<Transaction | null>, ok: string) => {
     setBusy(true); setMsg(null)
@@ -224,7 +225,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
           </Field>
           <Field label="Cuenta">
             <select value={v.accountId} onChange={(e) => setV({ ...v, accountId: e.target.value })} className={inputCls}>
-              <option value="">—</option>
+              <option value="">Sin cuenta</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </Field>
@@ -269,7 +270,12 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button disabled={busy} onClick={save} className={`${btnCls} col-span-2 bg-accent text-accent-fg`}>Guardar</button>
         {tx.status === 'pending' && (
-          <button disabled={busy} onClick={() => run(() => api.confirmTx(tx.id), 'Confirmado')} className={`${btnCls} col-span-2 bg-card text-good`}>✓ Confirmar</button>
+          <>
+            {/* the account picked above goes along: no confirming a movement that doesn't say where the money went */}
+            <button disabled={busy || !canConfirm} onClick={() => run(() => api.patchTx(tx.id, { [accKey]: +v.accountId || undefined, status: 'confirmed' }), 'Confirmado')}
+              className={`${btnCls} col-span-2 bg-card text-good`}>✓ Confirmar</button>
+            {!canConfirm && <p className="col-span-2 -mt-1 text-center text-[12px] text-warn">Elige la cuenta para poder confirmar</p>}
+          </>
         )}
         <button disabled={busy} onClick={() => run(() => api.undoTx(tx.id), 'Deshecho')} className={`${btnCls} bg-card`}>↶ Deshacer</button>
         <button disabled={busy || tx.status === 'void'} onClick={() => confirm('¿Anular este movimiento?') && run(() => api.voidTx(tx.id), 'Anulado')}
