@@ -7,6 +7,7 @@ export type Item = {
   type?: 'expense' | 'income';
   amount: number | null; currency: string | null; account: string | null; merchant: string | null;
   category: string | null; occurredAt: Date; note: string | null; debtId: number | null; planEntryId: number | null;
+  excluded?: boolean;
 };
 export type Parsed = {
   intent: Intent; items: Item[]; targetTxId: number | null; patch: Partial<Item> | null;
@@ -34,9 +35,9 @@ export const AGENT_HINT =
   '{"calls":[{"tool":string,"args":{}}],"reply":string}  (calls opcional; omite "reply" si necesitas ver resultados antes de responder)';
 
 const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
-- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note, debt_id:<#id>|null, plan_entry_id:<#id>|null}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
+- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note, debt_id:<#id>|null, plan_entry_id:<#id>|null, excluded?:true}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
 - add_transfer {from:"<code>", to:"<code>", amount, to_amount?, occurred_at?, note?}  mueve dinero entre cuentas propias (no es gasto). amount en la moneda de "from"; si "to" tiene otra moneda es un cambio y to_amount es lo que llegó
-- edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?, debt_id?}  sólo los campos que cambian
+- edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?, debt_id?, excluded?:true|false}  sólo los campos que cambian
 - add_debt {name, amount, currency, note?}  anota una deuda nueva de Randy (no es gasto ni mueve cuentas)
 - pay_plan {entry_id, amount?, currency?, account?, occurred_at?}  marca pagada una línea [pago] del plan: registra el gasto enlazado (sin amount = lo planificado; si su cuenta es en otra moneda te pide el monto)
 - plan_set {name, amount?, currency?, kind?:"bill"|"envelope", due_day?:1-31|null, due_day_end?:1-31|null, remind_days?, category?, account?, emoji?}  crea o cambia una línea del plan mensual (desde este mes en adelante)
@@ -78,6 +79,7 @@ Cómo trabajar:
   • Un gasto normal que ES el pago de una línea [pago] ("gasté 57 usdt en starlink") → add_transactions con plan_entry_id. En gastos de [presupuesto] pon la categoría correcta y plan_entry_id null.
   • "plan", "presupuesto", "qué me falta por pagar", "cuánto llevo del mes" → show plan (o consultas si pregunta algo puntual y responde tú).
   • Agregar/cambiar la plantilla ("agrega Netflix 10$ el 15", "el alquiler ahora es 320", "starlink se paga del 10 al 15", "recuérdamelo 3 días antes") → plan_set. Sólo este mes ("este mes el alquiler es 320", "este mes no voy al odontólogo") → plan_month. Quitar → plan_remove.
+- "Solo registro" (excluded:true): la plata salió de la cuenta pero NO es gasto y no entra en totales ni en el plan ("no lo cuentes como gasto", "solo para registro", "anótalo pero no cuenta", reembolsos que le devuelven, pagar algo por otro). En un gasto nuevo va en el item; en uno ya registrado, edit_transaction con excluded (false para volver a contarlo). No lo pongas por tu cuenta si no lo dice.
 - occurred_at en hora local sin zona ("ayer", "anoche", "el lunes" relativos a ahora); null si no lo dice. merchant: el lugar o a quién se pagó tal como lo dice. category: exactamente una ruta de la lista o null.
 - note: detalle o para qué fue, si el mensaje lo dice ("medicinas para mamá", "regalo de cumple de Ana"), en pocas palabras; null si no lo dice (no lo inventes).
 
@@ -154,6 +156,7 @@ function normItem(raw: any, codes: string[], now: Date, accountCurrency: Map<str
     amount: parseAmount(raw?.amount), currency, account, merchant: str(raw?.merchant),
     category: str(raw?.category), occurredAt: parseLocalDate(raw?.occurred_at, now), note: str(raw?.note),
     debtId: posInt(raw?.debt_id), planEntryId: posInt(raw?.plan_entry_id),
+    ...(typeof raw?.excluded === 'boolean' && { excluded: raw.excluded }),
   };
 }
 
@@ -170,6 +173,7 @@ export function normalizeIntent(raw: any, ctx: { now: Date; accounts: { code: st
       if (p[k] != null && full[k] != null) (patch as any)[k] = full[k];
     if (p.occurred_at) patch.occurredAt = full.occurredAt;
     if (full.debtId) patch.debtId = full.debtId;
+    if (full.excluded !== undefined) patch.excluded = full.excluded;
   }
   const bAmount = parseAmount(raw?.balance?.amount);
   const needs = new Set<string>();
@@ -193,10 +197,10 @@ export function normalizeIntent(raw: any, ctx: { now: Date; accounts: { code: st
 }
 
 type TxLike = {
-  id: number; type: string; status: string; occurredAt: Date; amount: unknown; currency: string; merchant: string | null;
+  id: number; type: string; status: string; occurredAt: Date; amount: unknown; currency: string; merchant: string | null; excluded?: boolean;
   category?: { name: string } | null; fromAccount?: { code: string } | null; toAccount?: { code: string } | null;
 };
 /** "#12 2026-09-22T08:30 expense 350 VES · panadería · Panadería · mercantil · confirmed" (for LLM context) */
 export const txLine = (t: TxLike) =>
   `#${t.id} ${caracasIso(t.occurredAt)} ${t.type} ${Number(t.amount)} ${t.currency}` +
-  [t.merchant, t.category?.name, t.fromAccount?.code ?? t.toAccount?.code, t.status].filter(Boolean).map((s) => ` · ${s}`).join('');
+  [t.merchant, t.category?.name, t.fromAccount?.code ?? t.toAccount?.code, t.status, t.excluded && 'solo registro'].filter(Boolean).map((s) => ` · ${s}`).join('');

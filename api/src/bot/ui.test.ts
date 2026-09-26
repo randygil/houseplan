@@ -123,3 +123,9 @@ test('plan: cambio de mes', () => {
   assert.match(t, /Lo que más se pasó: Mercado \+\$40,00, Gatos \+\$15,00/);
   assert.match(t, /Primeros: Alquiler \(01\/10\)/);
 });
+
+test('txCard: solo registro', () => {
+  const t = { id: 1, type: 'expense', status: 'confirmed', amount: 20, currency: 'USD', amountUsd: 20, fxRate: null, fxSource: null, merchant: 'Regalo', note: null, occurredAt: now, excluded: true };
+  assert.match(txCard(t, null, now), /🚫 Solo registro: no cuenta como gasto/);
+  assert.doesNotMatch(txCard({ ...t, excluded: false }, null, now), /Solo registro/);
+});

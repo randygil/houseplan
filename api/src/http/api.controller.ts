@@ -53,6 +53,10 @@ function txBody(b: any, partial: boolean): Partial<TxInput> {
   const out: Record<string, unknown> = {};
   if (b.type !== undefined || !partial) out.type = oneOf(b.type, TYPES, 'type');
   if (b.status !== undefined) out.status = oneOf(b.status, ['pending', 'confirmed'] as const, 'status');
+  if (b.excluded !== undefined) {
+    if (typeof b.excluded !== 'boolean') throw new BadRequestException('excluded: boolean');
+    out.excluded = b.excluded;
+  }
   if (b.occurredAt !== undefined || !partial) out.occurredAt = date(b.occurredAt, 'occurredAt');
   for (const k of NUMERIC) if (b[k] !== undefined) out[k] = b[k] === null ? null : num(b[k], k);
   for (const k of STRINGS) if (b[k] !== undefined) {
@@ -119,7 +123,7 @@ export class ApiController {
   transactions(@Query() q: Record<string, string>) {
     return this.insights.listTransactions({
       from: date(q.from, 'from', false), to: date(q.to, 'to', false),
-      categoryId: num(q.categoryId, 'categoryId'), accountId: num(q.accountId, 'accountId'), noAccount: q.noAccount === '1' || q.noAccount === 'true',
+      categoryId: num(q.categoryId, 'categoryId'), accountId: num(q.accountId, 'accountId'), noAccount: q.noAccount === '1' || q.noAccount === 'true', excluded: q.excluded === '1' || q.excluded === 'true' ? true : undefined,
       type: q.type || undefined, status: q.status || undefined, text: q.text || undefined, merchant: q.merchant || undefined,
       min: num(q.min, 'min'), max: num(q.max, 'max'),
       cursor: num(q.cursor, 'cursor'), limit: num(q.limit, 'limit'),

@@ -124,12 +124,12 @@ function tx(id: number, at: Date, p: Partial<TxView>): TxView {
   return {
     id, type: 'expense', status: 'confirmed', occurredAt: at.toISOString(), amount: 0, currency: 'USD', amountUsd: null,
     fxRate: null, fxSource: null, fromAccountId: null, toAccountId: null, toAmount: null, categoryId: null, merchant: null,
-    note: null, source: 'manual_text', bagId: null, debtId: null, planEntryId: null, confidence: null,
+    note: null, source: 'manual_text', bagId: null, debtId: null, planEntryId: null, excluded: false, confidence: null,
     createdAt: at.toISOString(), updatedAt: at.toISOString(), category: null, fromAccount: null, toAccount: null, ...p,
   }
 }
 
-const spend = (t: TxView) => (t.type === 'expense' || t.type === 'fee') && t.status !== 'void'
+const spend = (t: TxView) => (t.type === 'expense' || t.type === 'fee') && t.status !== 'void' && !t.excluded
 const inRange = (t: TxView, q: URLSearchParams) =>
   (!q.get('from') || t.occurredAt >= q.get('from')!) && (!q.get('to') || t.occurredAt <= q.get('to')!)
 const sum = (xs: TxView[]) => xs.reduce((s, t) => s + Number(t.amountUsd ?? 0), 0)
@@ -159,6 +159,7 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
     let xs = txs.filter((t) => inRange(t, q))
     const f = (k: string, fn: (t: TxView, v: string) => boolean) => { const v = q.get(k); if (v) xs = xs.filter((t) => fn(t, v)) }
     f('accountId', (t, v) => t.fromAccountId === +v || t.toAccountId === +v)
+    f('excluded', (t) => !!t.excluded)
     f('noAccount', (t) => (t.type === 'income' ? !t.toAccountId : t.type === 'transfer' ? !t.fromAccountId && !t.toAccountId : !t.fromAccountId))
     f('categoryId', (t, v) => t.categoryId === +v || t.category?.parentId === +v)
     f('type', (t, v) => t.type === v)

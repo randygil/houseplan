@@ -115,6 +115,7 @@ model Transaction {
   debt          Debt?     @relation(fields: [debtId], references: [id])
   planEntryId   Int?      /// expense that pays (or spends from) this month's plan line
   planEntry     PlanEntry? @relation(fields: [planEntryId], references: [id])
+  excluded      Boolean   @default(false) /// "solo registro": moves balances, never counts as spending
   confidence    Float?
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt @db.Timestamptz

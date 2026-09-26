@@ -10,6 +10,8 @@ export type TxInput = {
   occurredAt: Date; amount: number; currency: string;
   fromAccountId?: number; toAccountId?: number; toAmount?: number;
   categoryId?: number; merchant?: string; note?: string; debtId?: number; planEntryId?: number;
+  /** "solo registro": still moves balances, never counts as spending */
+  excluded?: boolean;
   source: string; rawEventId?: number; confidence?: number; fxRate?: number; fxSource?: string;
 };
 export type TxView = Transaction & {
@@ -39,7 +41,7 @@ const isUsd = (c: string) => c === 'USD' || c === 'USDT';
 const MONEY_KEYS = ['type', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'occurredAt', 'fxRate'] as const;
 const FIELDS = [
   'type', 'status', 'occurredAt', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId',
-  'merchant', 'note', 'debtId', 'planEntryId', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
+  'merchant', 'note', 'debtId', 'planEntryId', 'excluded', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
 ] as const;
 
 @Injectable()

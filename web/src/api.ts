@@ -27,6 +27,8 @@ export type Transaction = {
   bagId: number | null
   debtId: number | null
   planEntryId: number | null
+  /** "solo registro": moved money, not spending */
+  excluded: boolean
   confidence: number | null
   createdAt: string
   updatedAt: string
@@ -42,7 +44,7 @@ export type Debt = { id: number; name: string; currency: string; amount: number;
 export type TxInput = Partial<{
   type: TxType; status: 'pending' | 'confirmed'; occurredAt: string; amount: number; currency: string
   fromAccountId: number; toAccountId: number; toAmount: number; categoryId: number
-  merchant: string; note: string; source: string; debtId: number | null; planEntryId: number | null
+  merchant: string; note: string; source: string; debtId: number | null; planEntryId: number | null; excluded: boolean
 }>
 
 /** Monthly plan (PlanService.month). A line is a `bill` (paid once, has a due window) or an `envelope` (spent bit by bit). */
@@ -99,7 +101,7 @@ export type AskAnswer = {
 }
 
 export type TxQuery = Partial<{
-  from: string; to: string; categoryId: number; accountId: number; noAccount: 1; type: string; status: string
+  from: string; to: string; categoryId: number; accountId: number; noAccount: 1; excluded: 1; type: string; status: string
   text: string; cursor: number; limit: number
 }>
 

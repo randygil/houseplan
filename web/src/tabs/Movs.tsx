@@ -3,7 +3,7 @@ import { api, num, type Account, type Balance, type Category, type Transaction, 
 import { Field, SOURCE_BADGE, SOURCE_LABEL, Sheet, btnCls, daysAgo, fmtCur, fmtDay, fmtTime, inputCls, iso, parseNum, useLoad, useMoney, ymd } from '../ui'
 
 const RANGES: [string, string, number | null][] = [['7', '7 días', 7], ['30', '30 días', 30], ['90', '90 días', 90], ['all', 'Todo', null]]
-const TYPES: [string, string][] = [['', 'Tipo'], ['expense', 'Gasto'], ['income', 'Ingreso'], ['transfer', 'Transferencia'], ['fee', 'Comisión']]
+const TYPES: [string, string][] = [['', 'Tipo'], ['expense', 'Gasto'], ['income', 'Ingreso'], ['transfer', 'Transferencia'], ['fee', 'Comisión'], ['excluded', 'Solo registro']]
 const STATUSES: [string, string][] = [['', 'Estado'], ['pending', 'Pendiente'], ['confirmed', 'Confirmado'], ['void', 'Anulado']]
 
 const accOf = (b: Balance): Account => ({ id: b.accountId, code: b.code, name: b.name, currency: b.currency, kind: b.kind })
@@ -31,7 +31,7 @@ export default function Movs({ preset }: { preset: TxQuery }) {
     return {
       from: days ? iso(daysAgo(days - 1)) : undefined,
       accountId: f.accountId && f.accountId !== 'none' ? +f.accountId : undefined, noAccount: f.accountId === 'none' ? 1 : undefined, categoryId: f.categoryId ? +f.categoryId : undefined,
-      type: f.type || undefined, status: f.status || undefined, text: f.text || undefined,
+      type: f.type && f.type !== 'excluded' ? f.type : undefined, excluded: f.type === 'excluded' ? 1 : undefined, status: f.status || undefined, text: f.text || undefined,
       cursor: c ?? undefined, limit: 30,
     }
   }, [f])
@@ -112,10 +112,12 @@ export default function Movs({ preset }: { preset: TxQuery }) {
 const TYPE_LABEL: Record<string, string> = { expense: 'Gasto', income: 'Ingreso', transfer: 'Transferencia', fee: 'Comisión' }
 const catLabel = (c: Category) => `${c.emoji ? c.emoji + ' ' : ''}${c.path ?? c.name}`
 const isSpend = (t: TxView) => t.type === 'expense' || t.type === 'fee'
+/** what the totals count: "solo registro" rows moved money but aren't spending */
+const counts = (t: TxView) => isSpend(t) && t.status !== 'void' && !t.excluded
 
 function DayGroup({ txs, onTap }: { txs: TxView[]; onTap: (t: TxView) => void }) {
   const m = useMoney()
-  const spent = txs.filter((t) => isSpend(t) && t.status !== 'void').reduce((s, t) => s + num(t.amountUsd), 0)
+  const spent = txs.filter(counts).reduce((s, t) => s + num(t.amountUsd), 0)
   return (
     <section>
       <div className="mb-1.5 flex items-baseline justify-between px-1">
@@ -152,8 +154,9 @@ function Row({ t, first, onTap }: { t: TxView; first: boolean; onTap: () => void
         </div>
       </div>
       <div className="text-right">
-        <div className={`num text-[15px] font-semibold ${voided ? 'line-through text-muted' : t.type === 'income' ? 'text-good' : ''}`}>{sign}{m.tx(t)}</div>
+        <div className={`num text-[15px] font-semibold ${voided ? 'line-through text-muted' : t.excluded ? 'text-muted' : t.type === 'income' ? 'text-good' : ''}`}>{t.excluded ? '' : sign}{m.tx(t)}</div>
         {pending && <div className="text-[11px] font-semibold text-warn">pendiente</div>}
+        {t.excluded && !voided && <div className="text-[11px] font-medium text-muted">solo registro</div>}
       </div>
     </button>
   )
@@ -256,6 +259,16 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
               {plan.entries.map((p) => <option key={p.id} value={p.id}>{p.emoji ? `${p.emoji} ` : ''}{p.name} · {fmtCur(p.planned, p.currency)}{p.kind === 'bill' && p.status === 'paid' ? ' ✓' : ''}</option>)}
             </select>
           </Field>
+        )}
+        {isSpend(tx) && (
+          <label className="flex items-start gap-3 rounded-xl bg-card px-3 py-3">
+            <input type="checkbox" checked={tx.excluded} disabled={busy} className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--accent)]"
+              onChange={(e) => run(() => api.patchTx(tx.id, { excluded: e.target.checked }), e.target.checked ? 'Solo registro: ya no cuenta como gasto' : 'Vuelve a contar como gasto')} />
+            <span>
+              <span className="block text-[15px] font-medium">Solo registro</span>
+              <span className="block text-[12px] text-muted">No cuenta como gasto (totales, análisis, plan). El saldo de la cuenta sí se mueve.</span>
+            </span>
+          </label>
         )}
         <Field label="Comercio">
           <input value={v.merchant} onChange={(e) => setV({ ...v, merchant: e.target.value })} className={inputCls} />

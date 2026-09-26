@@ -246,7 +246,7 @@ export class PlanService {
     const ids = entries.map((e) => e.id);
     const txs = await this.db.transaction.findMany({
       where: {
-        type: { in: ['expense', 'fee'] }, status: { not: 'void' },
+        type: { in: ['expense', 'fee'] }, status: { not: 'void' }, excluded: false,
         OR: [{ occurredAt: { gte: from, lt: to }, OR: [{ planEntryId: null }, { planEntryId: { in: ids } }] }, { planEntryId: { in: ids } }],
       },
       include: { category: true },

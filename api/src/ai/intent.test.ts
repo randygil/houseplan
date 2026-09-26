@@ -114,3 +114,11 @@ test('plan: plan_entry_id en items y líneas del plan en el prompt', () => {
   assert.match(prompt, /pay_plan \{entry_id/);
   assert.match(buildAgentPrompt({ now, accounts, categories: [], turns: [], recent: [], debts: [], pending: null }, ''), /\(sin plan\)/);
 });
+
+test('excluded ("solo registro") en items y en patch', () => {
+  const p = normalizeIntent({ intent: 'add_expense', items: [{ amount: 20, currency: 'usd', excluded: true }, { amount: 5 }] }, { now, accounts });
+  assert.equal(p.items[0].excluded, true);
+  assert.equal(p.items[1].excluded, undefined);
+  assert.equal(normalizeIntent({ intent: 'edit', patch: { excluded: false } }, { now, accounts }).patch?.excluded, false);
+  assert.match(txLine({ id: 3, type: 'expense', status: 'confirmed', occurredAt: now, amount: 20, currency: 'USD', merchant: 'x', excluded: true }), /solo registro/);
+});

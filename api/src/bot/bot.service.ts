@@ -212,6 +212,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (mode === 'edit')
       return k.text('💵 Monto', cb('t', 'f', tx.id, 'amount')).text('🏪 Comercio', cb('t', 'f', tx.id, 'merchant')).text('📅 Fecha', cb('t', 'f', tx.id, 'date')).row()
         .text('📝 Nota', cb('t', 'f', tx.id, 'note')).text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).row()
+        .text(tx.excluded ? '🧾 Contar como gasto' : '🚫 Solo registro', cb('t', 'xc', tx.id)).row()
         .text('🗑️ Anular', cb('t', 'no', tx.id)).text('↩️ Volver', cb('t', 'v', tx.id));
     if (tx.status === 'confirmed') return k.text('↩️ Deshacer', cb('t', 'un', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
     // no account = nothing to confirm yet: the first button picks it
@@ -235,6 +236,12 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       case 'cp': return this.showTx(id, { msgId, mode: 'cat', parent: n });
       case 'o': return this.showTx(id, { mode: 'edit' }); // from /ultimos: open card as a new message
       case 'x': await this.ledger.void(id); return this.send(`🗑️ Anulado #${id}`);
+      case 'xc': { // toggle "solo registro"
+        const tx = await this.ledger.get(id);
+        if (!tx) return;
+        await this.ledger.update(id, { excluded: !tx.excluded });
+        return this.showTx(id, { msgId, mode: 'edit' });
+      }
       case 'un': {
         const tx = await this.ledger.undoLast(id);
         return tx ? this.showTx(id, { msgId }) : this.send('No hay nada que deshacer ahí 🙂');
@@ -397,7 +404,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         type, status: 'pending', occurredAt: it.occurredAt, amount: it.amount, currency: it.currency ?? 'VES',
         ...(type === 'income' ? { toAccountId: it.accountId ?? undefined } : { fromAccountId: it.accountId ?? undefined }),
         categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined,
-        debtId: it.debtId ?? undefined, planEntryId: it.planEntryId ?? undefined, source, confidence: p.confidence,
+        debtId: it.debtId ?? undefined, planEntryId: it.planEntryId ?? undefined, excluded: it.excluded, source, confidence: p.confidence,
       });
       const auto = p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
       if (auto) await this.ledger.confirm(tx.id);
@@ -459,6 +466,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (q.merchant) patch.merchant = q.merchant;
     if (q.note) patch.note = q.note;
     if (q.debtId && (await this.debts.get(q.debtId))) patch.debtId = q.debtId;
+    if (q.excluded !== undefined) patch.excluded = q.excluded;
     if (q.occurredAt) patch.occurredAt = q.occurredAt;
     let moved = false;
     if (q.account) {

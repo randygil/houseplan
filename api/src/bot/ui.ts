@@ -52,7 +52,7 @@ export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 export type CardTx = {
   id: number; type: string; status: string; amount: unknown; currency: string; amountUsd: unknown; fxRate: unknown;
-  fxSource: string | null; merchant: string | null; note: string | null; occurredAt: Date; debt?: { name: string } | null;
+  fxSource: string | null; merchant: string | null; note: string | null; occurredAt: Date; debt?: { name: string } | null; excluded?: boolean;
   category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string; currency?: string } | null; toAmount?: unknown;
   planEntry?: { item: { name: string } } | null;
 };
@@ -80,6 +80,7 @@ export function txCard(t: CardTx, catPath?: string | null, now = new Date()): st
   if (t.note) rows.push(`📝 ${esc(t.note)}`);
   if (t.debt) rows.push(`💳 Abono a ${esc(t.debt.name)}`);
   if (t.planEntry) rows.push(`📅 Plan: ${esc(t.planEntry.item.name)}`);
+  if (t.excluded) rows.push('🚫 Solo registro: no cuenta como gasto');
   rows.push(t.status === 'confirmed' ? '✅ Registrado' : t.status === 'void' ? '❌ Cancelado' : '📝 Borrador');
   return rows.join('\n');
 }

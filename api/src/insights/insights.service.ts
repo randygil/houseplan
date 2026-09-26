@@ -11,7 +11,8 @@ export type Range = { from: Date; to: Date };
 type Group = 'category' | 'account' | 'merchant' | 'day';
 type Row = { key: string; label: string; total: number; count: number };
 
-const SPEND = Prisma.sql`t.type IN ('expense','fee') AND t.status <> 'void'`;
+// "solo registro" rows moved money but aren't spending
+const SPEND = Prisma.sql`t.type IN ('expense','fee') AND t.status <> 'void' AND NOT t.excluded`;
 
 @Injectable()
 export class InsightsService {
@@ -53,13 +54,14 @@ export class InsightsService {
   }
 
   async listTransactions(q: Partial<Range> & {
-    categoryId?: number; accountId?: number; noAccount?: boolean; merchant?: string; text?: string; min?: number; max?: number;
+    categoryId?: number; accountId?: number; noAccount?: boolean; excluded?: boolean; merchant?: string; text?: string; min?: number; max?: number;
     type?: string; status?: string; limit?: number; cursor?: number;
   }): Promise<{ items: TxView[]; nextCursor: number | null }> {
     const take = Math.min(q.limit ?? 50, 500);
     const where: Prisma.TransactionWhereInput = {
       status: q.status || { not: 'void' },
       type: q.type,
+      excluded: q.excluded,
       ...((q.from || q.to) && { occurredAt: { gte: q.from, lte: q.to } }),
       ...((q.min != null || q.max != null) && { amountUsd: { gte: q.min, lte: q.max } }),
       merchant: q.merchant ? { contains: q.merchant, mode: 'insensitive' } : undefined,

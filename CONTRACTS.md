@@ -104,7 +104,7 @@ class InsightsService {
   rateHistory(r: Range): Promise<{ date: string; bcv: number|null; p2p: number|null }[]>;
 }
 ```
-Gastos = type in (expense, fee), status != void. Totales en USD por defecto (amountUsd).
+Gastos = type in (expense, fee), status != void, excluded = false ("solo registro": mueve saldos, no es gasto). Totales en USD por defecto (amountUsd).
 
 ## HTTP (`api/src/http`, prefijo global `/api`) — lo consume `web/`
 Auth guard: header `Authorization: tma <initData>` (HMAC con TG_TOKEN, user.id == TG_ALLOWED_ID, auth_date < 24h) **o** cookie `plata_session` (tabla web_sessions). `GET /api/auth/magic?token=` canjea token (creado por el bot con `AuthService.createMagicToken(): Promise<string>`, 10 min) → set cookie → redirect `/`.
