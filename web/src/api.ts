@@ -26,11 +26,15 @@ export type Transaction = {
   source: string
   bagId: number | null
   debtId: number | null
+  planEntryId: number | null
   confidence: number | null
   createdAt: string
   updatedAt: string
 }
-export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt?: { id: number; name: string } | null }
+export type TxView = Transaction & {
+  category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt?: { id: number; name: string } | null
+  planEntry?: { id: number; item: { name: string } } | null
+}
 
 /** What Randy owes; payments are expenses linked by debtId. `paid`/`remaining` in the debt's currency. */
 export type Debt = { id: number; name: string; currency: string; amount: number; note: string | null; createdAt: string; paid: number; remaining: number; remainingUsd: number; payments: number }
@@ -38,7 +42,33 @@ export type Debt = { id: number; name: string; currency: string; amount: number;
 export type TxInput = Partial<{
   type: TxType; status: 'pending' | 'confirmed'; occurredAt: string; amount: number; currency: string
   fromAccountId: number; toAccountId: number; toAmount: number; categoryId: number
-  merchant: string; note: string; source: string; debtId: number | null
+  merchant: string; note: string; source: string; debtId: number | null; planEntryId: number | null
+}>
+
+/** Monthly plan (PlanService.month). A line is a `bill` (paid once, has a due window) or an `envelope` (spent bit by bit). */
+export type PlanStatus = 'pending' | 'partial' | 'paid' | 'over' | 'skipped'
+export type PlanKind = 'bill' | 'envelope'
+export type PlanTx = { id: number; occurredAt: string; amount: number; currency: string; amountUsd: number | null; merchant: string | null; status: TxStatus; linked: boolean }
+export type PlanEntry = {
+  id: number; itemId: number; month: string; name: string; emoji: string | null; kind: PlanKind; categoryId: number | null; accountId: number | null; note: string | null
+  currency: string; planned: number; plannedUsd: number; spent: number; spentUsd: number; diff: number; diffUsd: number
+  status: PlanStatus; dueFrom: string | null; dueTo: string | null; dueLabel: string; remindDays: number
+  overridden: boolean; skipped: boolean; remindedOn: string | null; snoozeUntil: string | null
+  forecastUsd: number; expectedUsd: number; avgUsd: number | null; itemAmount: number; txs: PlanTx[]
+}
+export type PlanMonth = {
+  month: string; label: string; days: number; elapsed: number; today: string; isCurrent: boolean; rate: number | null
+  totals: { plannedUsd: number; spentUsd: number; forecastUsd: number; leftUsd: number; unplannedUsd: number; unplannedForecastUsd: number; allSpentUsd: number; allForecastUsd: number; bills: number; billsPaid: number }
+  unplanned: { label: string; total: number; count: number }[]
+  entries: PlanEntry[]
+}
+export type PlanItem = {
+  id: number; name: string; emoji: string | null; kind: PlanKind; amount: Money; currency: string; dueDay: number | null; dueDayEnd: number | null
+  remindDays: number; categoryId: number | null; accountId: number | null; note: string | null; active: boolean; sort: number
+}
+export type PlanItemInput = Partial<{
+  name: string; emoji: string | null; kind: PlanKind; amount: number; currency: string; dueDay: number | null; dueDayEnd: number | null
+  remindDays: number; categoryId: number | null; accountId: number | null; note: string | null
 }>
 
 export type Overview = {
@@ -128,4 +158,14 @@ export const api = {
   createDebt: (d: { name: string; amount: number; currency: string; note?: string }) => post<Debt>('/debts', d),
   deleteDebt: (id: number) => req<unknown>(`/debts/${id}`, { method: 'DELETE' }),
   ask: (question: string) => post<AskAnswer>('/ask', { question }),
+  plan: (month?: string) => req<PlanMonth>('/plan' + qs({ month })),
+  planItems: () => req<PlanItem[]>('/plan/items'),
+  createPlanItem: (b: PlanItemInput) => post<PlanItem>('/plan/items', b),
+  updatePlanItem: (id: number, b: PlanItemInput) => req<PlanItem>(`/plan/items/${id}`, { method: 'PATCH', body: JSON.stringify(b) }),
+  deletePlanItem: (id: number) => req<unknown>(`/plan/items/${id}`, { method: 'DELETE' }),
+  patchPlanEntry: (id: number, b: Partial<{ planned: number; skipped: boolean; dueFrom: string | null; dueTo: string | null }>) =>
+    req<PlanEntry>(`/plan/entries/${id}`, { method: 'PATCH', body: JSON.stringify(b) }),
+  payPlanEntry: (id: number, b: { amount: number; currency?: string; accountId?: number | null; occurredAt?: string }) =>
+    post<{ tx: Transaction; entry: PlanEntry }>(`/plan/entries/${id}/pay`, b),
+  unpayPlanEntry: (id: number) => post<PlanEntry>(`/plan/entries/${id}/unpay`),
 }

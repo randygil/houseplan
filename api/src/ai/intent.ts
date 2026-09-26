@@ -6,7 +6,7 @@ export type Intent = (typeof INTENTS)[number];
 export type Item = {
   type?: 'expense' | 'income';
   amount: number | null; currency: string | null; account: string | null; merchant: string | null;
-  category: string | null; occurredAt: Date; note: string | null; debtId: number | null;
+  category: string | null; occurredAt: Date; note: string | null; debtId: number | null; planEntryId: number | null;
 };
 export type Parsed = {
   intent: Intent; items: Item[]; targetTxId: number | null; patch: Partial<Item> | null;
@@ -19,6 +19,7 @@ export type IntentCtx = {
   turns: { role: string; text: string }[];
   recent: string[];
   debts: string[];
+  plan?: string[];
   pending: string | null;
 };
 
@@ -33,16 +34,20 @@ export const AGENT_HINT =
   '{"calls":[{"tool":string,"args":{}}],"reply":string}  (calls opcional; omite "reply" si necesitas ver resultados antes de responder)';
 
 const ACTIONS = `Acciones (el usuario ve el efecto en el chat al instante):
-- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note, debt_id:<#id>|null}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
+- add_transactions {items:[{type:"expense"|"income", amount, currency:"VES"|"USD"|"USDT"|null, account:"<code>"|null, merchant, category:"<ruta>"|null, occurred_at:"YYYY-MM-DDTHH:mm"|null, note, debt_id:<#id>|null, plan_entry_id:<#id>|null}], confidence:0..1}  crea cada movimiento con su tarjeta y botones (si falta cuenta/categoría queda como borrador y el usuario la elige ahí)
 - add_transfer {from:"<code>", to:"<code>", amount, to_amount?, occurred_at?, note?}  mueve dinero entre cuentas propias (no es gasto). amount en la moneda de "from"; si "to" tiene otra moneda es un cambio y to_amount es lo que llegó
 - edit_transaction {id, amount?, currency?, account?, merchant?, category?, occurred_at?, note?, debt_id?}  sólo los campos que cambian
 - add_debt {name, amount, currency, note?}  anota una deuda nueva de Randy (no es gasto ni mueve cuentas)
+- pay_plan {entry_id, amount?, currency?, account?, occurred_at?}  marca pagada una línea [pago] del plan: registra el gasto enlazado (sin amount = lo planificado; si su cuenta es en otra moneda te pide el monto)
+- plan_set {name, amount?, currency?, kind?:"bill"|"envelope", due_day?:1-31|null, due_day_end?:1-31|null, remind_days?, category?, account?, emoji?}  crea o cambia una línea del plan mensual (desde este mes en adelante)
+- plan_month {entry_id, amount?, skip?:true|false}  sólo este mes: otro monto planificado u omitirla ("este mes no")
+- plan_remove {name}  la saca del plan (los meses pasados quedan)
 - void_transaction {id}  anula (se recupera con undo)
 - undo {id?}  deshace el último cambio (o el de esa tx)
 - set_balance {account, amount}  concilia con el saldo real que dice el usuario
 - answer_prompt {amount?, merchant?, category?, account?}  responde al prompt pendiente del bot
 - sync_binance {}  sincroniza Binance (P2P, Pay, saldos) y muestra el estado
-- show {view:"saldo"|"ultimos"|"pendientes"|"deudas"|"hoy"|"semana"|"mes"|"conciliar"|"panel"}  le muestra esa vista (lista, saldos, botones)`;
+- show {view:"saldo"|"ultimos"|"pendientes"|"deudas"|"plan"|"hoy"|"semana"|"mes"|"conciliar"|"panel"}  le muestra esa vista (lista, saldos, botones)`;
 
 export function buildAgentPrompt(ctx: IntentCtx, readTools: string): string {
   const accts = ctx.accounts.map((a) => `- ${a.code} (${a.name}, ${a.currency}): ~${Math.round(a.balance * 100) / 100}`).join('\n');
@@ -68,6 +73,11 @@ Cómo trabajar:
 - "Tarjeta de crédito" NO es una cuenta: pagarla/abonarla/una cuota es saldar deuda → expense con category "Deudas › Tarjeta de crédito" (otras deudas → "Deudas"), account = de dónde salió el dinero, merchant = el banco emisor si lo dice.
 - Pagos de deudas: si un gasto paga/abona/es cuota de una de las "Deudas de Randy" de abajo (por nombre, acreedor o contexto: "le pagué a Juan", "abono del préstamo", "cuota de la tarjeta") → ese gasto lleva debt_id de esa deuda. Si no calza con ninguna, debt_id null. Si hay dos posibles, pregunta.
 - Deuda nueva ("le debo 200$ a Juan", "me prestaron 50 verdes", "saqué 300$ en la tarjeta de crédito") → add_debt; name corto que la identifique ("Préstamo de Juan"). Nunca la registres como gasto.
+- Plan del mes (abajo): [pago] = algo que se paga una vez (alquiler, starlink, luz), [presupuesto] = se va gastando (mercado, gasolina; cuenta solo por categoría).
+  • "pagué el alquiler", "ya pagué starlink" (sin más detalle) → pay_plan con ese entry_id. Si dice monto/cuenta/moneda, pásalos ("pagué la luz, fueron 4.200 bs por mercantil" → amount 4200, currency VES, account mercantil). Nunca lo registres dos veces: si ya está pagado, pregunta si es otro pago.
+  • Un gasto normal que ES el pago de una línea [pago] ("gasté 57 usdt en starlink") → add_transactions con plan_entry_id. En gastos de [presupuesto] pon la categoría correcta y plan_entry_id null.
+  • "plan", "presupuesto", "qué me falta por pagar", "cuánto llevo del mes" → show plan (o consultas si pregunta algo puntual y responde tú).
+  • Agregar/cambiar la plantilla ("agrega Netflix 10$ el 15", "el alquiler ahora es 320", "starlink se paga del 10 al 15", "recuérdamelo 3 días antes") → plan_set. Sólo este mes ("este mes el alquiler es 320", "este mes no voy al odontólogo") → plan_month. Quitar → plan_remove.
 - occurred_at en hora local sin zona ("ayer", "anoche", "el lunes" relativos a ahora); null si no lo dice. merchant: el lugar o a quién se pagó tal como lo dice. category: exactamente una ruta de la lista o null.
 - note: detalle o para qué fue, si el mensaje lo dice ("medicinas para mamá", "regalo de cumple de Ana"), en pocas palabras; null si no lo dice (no lo inventes).
 
@@ -76,6 +86,8 @@ ${accts}
 Categorías: ${ctx.categories.join(' | ')}
 Deudas de Randy (#id nombre: le queda por pagar de total):
 ${ctx.debts.join('\n') || '(ninguna)'}
+Plan del mes (#entry_id nombre [tipo]: planificado, pagado/gastado, estado):
+${ctx.plan?.join('\n') || '(sin plan)'}
 Últimas transacciones (#id):
 ${ctx.recent.join('\n') || '(ninguna)'}
 Prompt pendiente del bot: ${ctx.pending ?? '(ninguno)'}
@@ -141,7 +153,7 @@ function normItem(raw: any, codes: string[], now: Date, accountCurrency: Map<str
     ...(raw?.type === 'income' || raw?.type === 'expense' ? { type: raw.type } : {}),
     amount: parseAmount(raw?.amount), currency, account, merchant: str(raw?.merchant),
     category: str(raw?.category), occurredAt: parseLocalDate(raw?.occurred_at, now), note: str(raw?.note),
-    debtId: posInt(raw?.debt_id),
+    debtId: posInt(raw?.debt_id), planEntryId: posInt(raw?.plan_entry_id),
   };
 }
 

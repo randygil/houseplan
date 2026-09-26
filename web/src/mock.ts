@@ -1,5 +1,5 @@
 // Dev-only fixtures (VITE_MOCK=1). Shapes follow CONTRACTS.md; not bundled in production builds.
-import type { Account, BagStatus, Category, Debt, TxView } from './api'
+import type { Account, BagStatus, Category, Debt, PlanEntry, PlanItem, TxView } from './api'
 
 let seed = 7
 const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
@@ -70,11 +70,61 @@ let debts: Debt[] = [
   { id: 2, name: 'Tarjeta Mercantil', currency: 'VES', amount: 40000, note: null, createdAt: new Date(now - 40 * 864e5).toISOString(), paid: 40000, remaining: 0, remainingUsd: 0, payments: 3 },
 ]
 
+// Randy's sheet (USDT). [name, emoji, kind, amount, dueDay, dueDayEnd, paid this month (null = not yet)]
+const planRows: [string, string, 'bill' | 'envelope', number, number | null, number | null, number | null][] = [
+  ['Alquiler', '🔑', 'bill', 300, 1, 5, 300], ['Almuerzos', '🍴', 'envelope', 100, null, null, 64], ['Mercado', '🛒', 'envelope', 200, null, null, 171],
+  ['Gasolina', '⛽', 'envelope', 70, null, null, 38], ['Starlink', '🛰️', 'bill', 55, 28, null, null], ['Internet', '🌐', 'bill', 25, 15, null, 25],
+  ['Movistar', '📱', 'bill', 10, 20, null, 10], ['Digitel', '📱', 'bill', 10, 20, null, null], ['Minecraft', '🎮', 'bill', 22, 3, null, 22],
+  ['Google One', '☁️', 'bill', 10, 12, null, 10], ['Odontólogo', '🦷', 'bill', 80, null, null, null], ['Gatos', '🐱', 'envelope', 60, null, null, 71],
+  ['Lavada de carro', '🚿', 'bill', 10, null, null, 10], ['Luz', '💡', 'bill', 15, 22, 25, 18.2], ['Corte de cabello', '💈', 'bill', 10, null, null, null],
+]
+let planItems: PlanItem[] = planRows.map(([name, emoji, kind, amount, dueDay, dueDayEnd], i) => ({
+  id: i + 1, name, emoji, kind, amount, currency: 'USDT', dueDay, dueDayEnd, remindDays: 1, categoryId: null, accountId: kind === 'bill' ? 2 : null, note: null, active: true, sort: i + 1,
+}))
+const planPaid = new Map(planRows.map((r, i) => [i + 1, r[6]]))
+const planSkipped = new Set<number>()
+function planMonth(month: string) {
+  const today = new Date(now - 4 * 36e5).toISOString().slice(0, 10), cur = today.slice(0, 7)
+  const [y, mo] = month.split('-').map(Number), days = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+  const elapsed = month < cur ? days : month > cur ? 0 : +today.slice(8)
+  const d = (n: number) => `${month}-${String(Math.min(n, days)).padStart(2, '0')}`
+  const entries: PlanEntry[] = planItems.filter((i) => i.active).map((i) => {
+    const planned = Number(i.amount), spent = month === cur ? planPaid.get(i.id) ?? 0 : month < cur ? planned * (0.85 + rnd() * 0.3) : 0
+    const skipped = month === cur && planSkipped.has(i.id)
+    const dueFrom = i.dueDay ? d(i.dueDay) : null, dueTo = i.dueDay ? d(Math.max(i.dueDay, i.dueDayEnd ?? i.dueDay)) : null
+    const status = skipped ? 'skipped' : spent <= 0 ? 'pending' : i.kind === 'bill' ? (spent >= planned * 0.9 ? 'paid' : 'partial') : spent > planned ? 'over' : 'partial'
+    const toStart = dueFrom ? Math.round((Date.parse(dueFrom) - Date.parse(today)) / 864e5) : 0, toEnd = dueTo ? Math.round((Date.parse(dueTo) - Date.parse(today)) / 864e5) : 0
+    const dueLabel = !dueFrom ? 'sin fecha' : toStart > 0 ? (toStart === 1 ? 'vence mañana' : `vence el ${dueFrom.slice(8)}/${dueFrom.slice(5, 7)} (en ${toStart} días)`) : toEnd === 0 ? 'vence hoy' : toEnd > 0 ? `tienes hasta el ${dueTo!.slice(8)}/${dueTo!.slice(5, 7)}` : `venció hace ${-toEnd} día${toEnd === -1 ? '' : 's'}`
+    const pace = elapsed >= 7 && elapsed < days ? (spent / elapsed) * days : spent
+    const forecastUsd = skipped ? 0 : elapsed >= days ? spent : i.kind === 'bill' ? (status === 'paid' ? spent : Math.max(planned, spent)) : elapsed < 7 ? Math.max(planned, spent) : Math.max(spent, pace)
+    return {
+      id: i.id, itemId: i.id, month, name: i.name, emoji: i.emoji, kind: i.kind, categoryId: null, accountId: i.accountId, note: null, currency: i.currency,
+      planned, plannedUsd: planned, spent, spentUsd: spent, diff: spent - planned, diffUsd: spent - planned, status, dueFrom, dueTo, dueLabel, remindDays: i.remindDays,
+      overridden: false, skipped, remindedOn: null, snoozeUntil: null, forecastUsd, expectedUsd: i.kind === 'envelope' ? (planned * elapsed) / days : dueTo && dueTo <= today ? planned : 0,
+      avgUsd: i.name === 'Luz' ? 17.4 : planned, itemAmount: planned,
+      txs: spent > 0 ? [{ id: 1000 + i.id, occurredAt: new Date(now - 3 * 864e5).toISOString(), amount: i.name === 'Luz' ? 3736 : spent, currency: i.name === 'Luz' ? 'VES' : 'USDT', amountUsd: spent, merchant: i.name, status: 'confirmed', linked: i.kind === 'bill' }] : [],
+    } as PlanEntry
+  })
+  const live = entries.filter((e) => !e.skipped), sumBy = (xs: PlanEntry[], f: (e: PlanEntry) => number) => xs.reduce((s, e) => s + f(e), 0)
+  const unplannedUsd = month > cur ? 0 : 46.3
+  const spentUsd = sumBy(entries, (e) => e.spentUsd), forecastUsd = sumBy(entries, (e) => e.forecastUsd), unplannedForecastUsd = elapsed >= 7 && elapsed < days ? (unplannedUsd / elapsed) * days : unplannedUsd
+  return {
+    month, label: new Date(Date.UTC(y, mo - 1, 15)).toLocaleDateString('es-VE', { month: 'long', year: 'numeric', timeZone: 'UTC' }), days, elapsed, today, isCurrent: month === cur, rate: P2P,
+    totals: {
+      plannedUsd: sumBy(live, (e) => e.plannedUsd), spentUsd, forecastUsd, leftUsd: sumBy(live, (e) => Math.max(0, e.plannedUsd - e.spentUsd)), unplannedUsd, unplannedForecastUsd,
+      allSpentUsd: spentUsd + unplannedUsd, allForecastUsd: forecastUsd + unplannedForecastUsd,
+      bills: live.filter((e) => e.kind === 'bill').length, billsPaid: live.filter((e) => e.kind === 'bill' && e.status === 'paid').length,
+    },
+    unplanned: month > cur ? [] : [{ label: '🎉 Ocio', total: 28.5, count: 3 }, { label: '💊 Salud', total: 17.8, count: 1 }],
+    entries,
+  }
+}
+
 function tx(id: number, at: Date, p: Partial<TxView>): TxView {
   return {
     id, type: 'expense', status: 'confirmed', occurredAt: at.toISOString(), amount: 0, currency: 'USD', amountUsd: null,
     fxRate: null, fxSource: null, fromAccountId: null, toAccountId: null, toAmount: null, categoryId: null, merchant: null,
-    note: null, source: 'manual_text', bagId: null, debtId: null, confidence: null,
+    note: null, source: 'manual_text', bagId: null, debtId: null, planEntryId: null, confidence: null,
     createdAt: at.toISOString(), updatedAt: at.toISOString(), category: null, fromAccount: null, toAccount: null, ...p,
   }
 }
@@ -179,6 +229,22 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
   if (p === '/debts' && m === 'GET') return debts
   if (p === '/debts') { const d: Debt = { id: debts.length + 1, createdAt: new Date().toISOString(), note: null, ...body, paid: 0, remaining: body.amount, remainingUsd: body.currency === 'VES' ? body.amount / P2P : body.amount, payments: 0 }; debts.push(d); return d }
   if ((r = p.match(/^\/debts\/(\d+)$/))) { debts = debts.filter((d) => d.id !== +r![1]); return null }
+  if (p === '/plan') return planMonth(q.get('month') || new Date(now - 4 * 36e5).toISOString().slice(0, 7))
+  if (p === '/plan/items' && m === 'GET') return planItems
+  if (p === '/plan/items') { const it: PlanItem = { id: planItems.length + 1, active: true, sort: planItems.length + 1, emoji: null, kind: 'bill', dueDay: null, dueDayEnd: null, remindDays: 1, categoryId: null, accountId: null, note: null, currency: 'USDT', amount: 0, name: '', ...body }; planItems.push(it); return it }
+  if ((r = p.match(/^\/plan\/items\/(\d+)$/))) {
+    const it = planItems.find((i) => i.id === +r![1])!
+    if (m === 'DELETE') it.active = false; else Object.assign(it, body)
+    return it
+  }
+  if ((r = p.match(/^\/plan\/entries\/(\d+)(?:\/(\w+))?$/))) {
+    const id = +r[1], key = new Date(now - 4 * 36e5).toISOString().slice(0, 7)
+    if (r[2] === 'pay') planPaid.set(id, (planPaid.get(id) ?? 0) + (body.currency === 'VES' ? body.amount / P2P : body.amount))
+    else if (r[2] === 'unpay') planPaid.set(id, null)
+    else if (body.skipped !== undefined) body.skipped ? planSkipped.add(id) : planSkipped.delete(id)
+    const entry = planMonth(key).entries.find((e) => e.id === id)!
+    return r[2] === 'pay' ? { tx: txs[0], entry } : entry
+  }
   if (p === '/ask') {
     const qn = String(body.question).toLowerCase()
     if (qn.includes('ayer')) return {

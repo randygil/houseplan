@@ -64,6 +64,25 @@ class CategoriesService {
   learn(merchant: string, categoryId: number, accountId?: number): Promise<void>;
 }
 ```
+## PlanService (`api/src/ledger/plan.service.ts`) — plan mensual
+`PlanItem` = plantilla (nombre, monto, moneda, `kind` bill|envelope, `dueDay`/`dueDayEnd`, `remindDays`, categoría, cuenta habitual).
+`PlanEntry` = ese item en un mes (`planned` copiado, ventana de pago, `skipped`, `overridden`). Se crean solos para el mes actual y futuros.
+Lo pagado/gastado se calcula, no se guarda: tx enlazada (`transactions.planEntryId`) → si no, bill cuyo nombre aparece en el comercio → si no, envelope por categoría (o su padre). Lo demás = "fuera del plan".
+Bill pagado al 90% de lo planificado (tasas). Pronóstico: bill = plan hasta pagarse; envelope = plan la 1ª semana, luego el ritmo.
+```ts
+month(key: 'YYYY-MM'): Promise<MonthView>        // entries + totals (planned/spent/forecast/left/unplanned) + avgUsd de 3 meses
+pay(entryId, {amount?, currency?, accountId?}): {tx} | {need: {currency, estimate}}  // sin monto y cuenta en otra moneda => pedirlo
+updateEntry(id, {planned?, skipped?, dueFrom?, dueTo?})   // sólo ese mes
+createItem / updateItem (re-planifica meses >= actual no tocados ni pagados) / removeItem
+dueReminders(now)  // bills que tocan hoy: remindDays antes, al abrir, último día, +1/+3/+7 atrasado; sin fecha: 3 días antes de fin de mes
+```
+Bot: `/plan`, recordatorio `plan_due` (cron 09:00, agrupado en un mensaje; botones `pl:ok|amt|tm|tma|sk`), el día 1 cierre del mes anterior. Agente: `pay_plan`, `plan_set`, `plan_month`, `plan_remove`, `plan_entry_id` en items.
+```
+GET    /api/plan?month=YYYY-MM          PATCH /api/plan/entries/:id {planned?, skipped?, dueFrom?, dueTo?}
+GET|POST /api/plan/items                POST  /api/plan/entries/:id/pay {amount, currency?, accountId?, occurredAt?}
+PATCH|DELETE /api/plan/items/:id        POST  /api/plan/entries/:id/unpay
+```
+
 ## FxModule (`api/src/fx`)
 ```ts
 class FxService {

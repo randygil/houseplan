@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
-import { api, type TxQuery } from '../api'
+import { api, type PlanMonth, type TxQuery } from '../api'
 import { Card, Loading, fmtNum, useLoad, useMoney } from '../ui'
 
-type Go = (t: 'movimientos', q?: TxQuery) => void
+type Go = (t: 'movimientos' | 'plan', q?: TxQuery) => void
 
 export default function Home({ go }: { go: Go }) {
   const { data: o, error } = useLoad(api.overview)
+  const { data: plan } = useLoad(() => api.plan())
   const m = useMoney()
   const [minusDebts, setMinusDebts] = useState(() => { try { return localStorage.getItem('plata.minusDebts') === '1' } catch { return false } })
   const toggleDebts = (v: boolean) => { setMinusDebts(v); try { localStorage.setItem('plata.minusDebts', v ? '1' : '0') } catch {} }
@@ -36,6 +37,8 @@ export default function Home({ go }: { go: Go }) {
           </div>
         )}
       </Card>
+
+      {plan && plan.entries.length > 0 && <PlanCard m={plan} onOpen={() => go('plan')} />}
 
       <div className="grid grid-cols-3 gap-3">
         {([['Hoy', o.today], ['Semana', o.week], ['Mes', o.month]] as const).map(([l, v]) => (
@@ -98,3 +101,32 @@ const Rate = ({ label, v }: { label: string; v: number | null }) => (
     <div className="num text-[22px] font-semibold">{v ? fmtNum(v, 2) : '—'}</div>
   </div>
 )
+
+/** Month plan at a glance: spent vs budget, forecast, and the next bill that's due. */
+function PlanCard({ m, onOpen }: { m: PlanMonth; onOpen: () => void }) {
+  const $ = useMoney()
+  const t = m.totals
+  const next = m.entries.filter((e) => e.kind === 'bill' && (e.status === 'pending' || e.status === 'partial') && e.dueFrom)
+    .sort((a, b) => a.dueFrom!.localeCompare(b.dueFrom!))[0]
+  const late = next?.dueTo != null && next.dueTo < m.today
+  const over = t.allForecastUsd - t.plannedUsd
+  return (
+    <button onClick={onOpen} className="block w-full rounded-2xl bg-card p-4 text-left active:opacity-80">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted">Plan del mes</h2>
+        <span className="num text-[13px] text-muted">{t.billsPaid}/{t.bills} pagos</span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <span className="num text-[22px] font-bold">{$.usd(t.allSpentUsd, 0)}</span>
+        <span className="num text-[14px] text-muted">de {$.usd(t.plannedUsd, 0)}</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+        <div className={`h-full rounded-full ${t.allSpentUsd > t.plannedUsd ? 'bg-bad' : 'bg-[var(--s1)]'}`} style={{ width: `${Math.min(100, (t.allSpentUsd / Math.max(t.plannedUsd, 1)) * 100)}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[12px]">
+        <span className={`num ${over > 1 ? 'text-bad' : 'text-muted'}`}>Pronóstico {$.usd(t.allForecastUsd, 0)}{Math.abs(over) > 1 ? ` (${over > 0 ? '+' : '−'}${$.usd(Math.abs(over), 0)})` : ''}</span>
+        {next && <span className={late ? 'font-semibold text-bad' : 'text-muted'}>{next.emoji ?? '📅'} {next.name}: {next.dueLabel}</span>}
+      </div>
+    </button>
+  )
+}

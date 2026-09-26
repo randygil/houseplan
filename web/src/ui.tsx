@@ -144,11 +144,11 @@ export const inputCls = 'w-full rounded-xl border border-line bg-card px-3 py-2.
 export const btnCls = 'rounded-xl px-4 py-3 text-[15px] font-semibold active:opacity-70 disabled:opacity-40'
 
 export const SOURCE_BADGE: Record<string, string> = {
-  manual_voice: '🎙️', p2p: '💱', card_delta: '💳', pay: 'Pay', manual_text: '✍️', manual_photo: '📷', reconcile: '⚖️', backfill: '⤓',
+  manual_voice: '🎙️', p2p: '💱', card_delta: '💳', pay: 'Pay', manual_text: '✍️', manual_photo: '📷', reconcile: '⚖️', backfill: '⤓', plan: '📅', manual_web: '🖥️',
 }
 
 export const SOURCE_LABEL: Record<string, string> = {
-  manual_voice: 'Voz', p2p: 'P2P', card_delta: 'Tarjeta', pay: 'Binance Pay', manual_text: 'Texto', manual_photo: 'Foto', reconcile: 'Conciliación', backfill: 'Histórico',
+  manual_voice: 'Voz', p2p: 'P2P', card_delta: 'Tarjeta', pay: 'Binance Pay', manual_text: 'Texto', manual_photo: 'Foto', reconcile: 'Conciliación', backfill: 'Histórico', plan: 'Plan del mes', manual_web: 'Panel',
 }
 
 export const SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)']

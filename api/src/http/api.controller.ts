@@ -10,6 +10,7 @@ import { BagsService } from '../ledger/bags.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, type TxInput } from '../ledger/ledger.service';
+import { monthKey, PlanService, type ItemInput } from '../ledger/plan.service';
 import { AuthGuard } from './auth.service';
 
 /** Prisma Decimal/bigint -> number in JSON responses. */
@@ -44,7 +45,7 @@ const oneOf = <T extends string>(v: unknown, opts: readonly T[], name: string, d
 };
 
 const TYPES = ['transfer', 'expense', 'income', 'fee'] as const;
-const NUMERIC = ['amount', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId', 'debtId', 'rawEventId', 'confidence', 'fxRate'] as const;
+const NUMERIC = ['amount', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId', 'debtId', 'planEntryId', 'rawEventId', 'confidence', 'fxRate'] as const;
 const STRINGS = ['currency', 'merchant', 'note', 'source', 'fxSource'] as const;
 
 function txBody(b: any, partial: boolean): Partial<TxInput> {
@@ -66,6 +67,38 @@ function txBody(b: any, partial: boolean): Partial<TxInput> {
   return out as Partial<TxInput>;
 }
 
+const KINDS = ['bill', 'envelope'] as const;
+function itemBody(b: any, partial: boolean): Partial<ItemInput> {
+  if (!b || typeof b !== 'object') throw new BadRequestException('body required');
+  const out: Partial<ItemInput> = {};
+  const day = (k: 'dueDay' | 'dueDayEnd') => {
+    if (b[k] === undefined) return;
+    const n = b[k] === null || b[k] === '' ? null : num(b[k], k)!;
+    if (n !== null && !(Number.isInteger(n) && n >= 1 && n <= 31)) throw new BadRequestException(`${k}: 1-31`);
+    out[k] = n;
+  };
+  if (b.name !== undefined || !partial) {
+    if (typeof b.name !== 'string' || !b.name.trim()) throw new BadRequestException('name required');
+    out.name = b.name.trim();
+  }
+  if (b.amount !== undefined || !partial) {
+    const a = num(b.amount, 'amount');
+    if (!(Number(a) > 0)) throw new BadRequestException('amount > 0 required');
+    out.amount = a;
+  }
+  if (b.currency !== undefined || !partial) out.currency = oneOf(b.currency, ['VES', 'USD', 'USDT'] as const, 'currency', 'USDT');
+  if (b.kind !== undefined) out.kind = oneOf(b.kind, KINDS, 'kind');
+  day('dueDay'); day('dueDayEnd');
+  if (b.remindDays !== undefined) {
+    const r = num(b.remindDays, 'remindDays');
+    if (!(Number.isInteger(r) && r! >= 0 && r! <= 15)) throw new BadRequestException('remindDays: 0-15');
+    out.remindDays = r;
+  }
+  for (const k of ['categoryId', 'accountId'] as const) if (b[k] !== undefined) out[k] = b[k] === null || b[k] === '' ? null : num(b[k], k);
+  for (const k of ['emoji', 'note'] as const) if (b[k] !== undefined) out[k] = typeof b[k] === 'string' && b[k].trim() ? b[k].trim() : null;
+  return out;
+}
+
 @Controller()
 @UseGuards(AuthGuard)
 @UseInterceptors(PlainJson)
@@ -77,6 +110,7 @@ export class ApiController {
     private insights: InsightsService,
     private asker: AskService,
     private debts: DebtsService,
+    private plan: PlanService,
   ) {}
 
   @Get('overview') overview() { return this.insights.overview(); }
@@ -156,6 +190,44 @@ export class ApiController {
   }
 
   @Delete('debts/:id') removeDebt(@Param('id', ParseIntPipe) id: number) { return this.debts.remove(id); }
+
+  // ── plan del mes ──
+  @Get('plan')
+  planMonth(@Query('month') month?: string) {
+    if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException('month: YYYY-MM');
+    return this.plan.month(month || monthKey(new Date()));
+  }
+
+  @Get('plan/items') planItems() { return this.plan.items(); }
+  @Post('plan/items') createPlanItem(@Body() b: unknown) { return this.plan.createItem(itemBody(b, false) as ItemInput); }
+  @Patch('plan/items/:id') updatePlanItem(@Param('id', ParseIntPipe) id: number, @Body() b: unknown) { return this.plan.updateItem(id, itemBody(b, true)); }
+  @Delete('plan/items/:id') removePlanItem(@Param('id', ParseIntPipe) id: number) { return this.plan.removeItem(id); }
+
+  @Patch('plan/entries/:id')
+  async updatePlanEntry(@Param('id', ParseIntPipe) id: number, @Body() b: any) {
+    const day = (v: unknown, k: string) => v === undefined ? undefined : v === null || v === '' ? null
+      : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : (() => { throw new BadRequestException(`${k}: YYYY-MM-DD`); })();
+    const planned = num(b?.planned, 'planned');
+    if (planned !== undefined && !(planned > 0)) throw new BadRequestException('planned > 0');
+    await this.plan.updateEntry(id, {
+      planned, skipped: typeof b?.skipped === 'boolean' ? b.skipped : undefined, dueFrom: day(b?.dueFrom, 'dueFrom'), dueTo: day(b?.dueTo, 'dueTo'),
+    });
+    return this.plan.entry(id);
+  }
+
+  @Post('plan/entries/:id/pay')
+  async payPlanEntry(@Param('id', ParseIntPipe) id: number, @Body() b: any) {
+    const amount = num(b?.amount, 'amount');
+    if (!(Number(amount) > 0)) throw new BadRequestException('amount > 0 required'); // the panel always sends what was paid
+    const r = await this.plan.pay(id, {
+      amount, currency: b?.currency ? oneOf(b.currency, ['VES', 'USD', 'USDT'] as const, 'currency') : undefined,
+      accountId: num(b?.accountId, 'accountId') ?? null, occurredAt: date(b?.occurredAt, 'occurredAt', false),
+      note: typeof b?.note === 'string' && b.note.trim() ? b.note.trim() : undefined, source: 'manual_web',
+    });
+    return { ...r, entry: await this.plan.entry(id) };
+  }
+
+  @Post('plan/entries/:id/unpay') async unpayPlanEntry(@Param('id', ParseIntPipe) id: number) { await this.plan.unpay(id); return this.plan.entry(id); }
 
   @Post('ask')
   ask(@Body() b: { question?: unknown }) {

@@ -1,4 +1,5 @@
 // Pure helpers for the bot: time in Caracas, money formatting, tx cards. No Nest/grammY here (tested in ui.test.ts).
+import type { EntryView, MonthView } from '../ledger/plan.service';
 
 const OFF = 4 * 3600e3; // America/Caracas = UTC-4 fijo
 const DAY = 864e5;
@@ -53,6 +54,7 @@ export type CardTx = {
   id: number; type: string; status: string; amount: unknown; currency: string; amountUsd: unknown; fxRate: unknown;
   fxSource: string | null; merchant: string | null; note: string | null; occurredAt: Date; debt?: { name: string } | null;
   category?: { name: string; emoji: string | null } | null; fromAccount?: { name: string } | null; toAccount?: { name: string; currency?: string } | null; toAmount?: unknown;
+  planEntry?: { item: { name: string } } | null;
 };
 
 const FX_LABEL: Record<string, string> = { bag: 'de tu cambio', p2p: 'del cambio', p2p_avg: 'P2P prom.', market: 'P2P mercado', bcv: 'BCV', manual: 'manual' };
@@ -77,6 +79,7 @@ export function txCard(t: CardTx, catPath?: string | null, now = new Date()): st
   rows.push(`🕒 ${day} ${hhmm(t.occurredAt)}`);
   if (t.note) rows.push(`📝 ${esc(t.note)}`);
   if (t.debt) rows.push(`💳 Abono a ${esc(t.debt.name)}`);
+  if (t.planEntry) rows.push(`📅 Plan: ${esc(t.planEntry.item.name)}`);
   rows.push(t.status === 'confirmed' ? '✅ Registrado' : t.status === 'void' ? '❌ Cancelado' : '📝 Borrador');
   return rows.join('\n');
 }
@@ -91,6 +94,89 @@ export function debtsText(ds: { name: string; currency: string; amount: number; 
   if (open.length > 1) rows.push(`\nTotal: <b>${[...tot].map(([c, n]) => money(n, c)).join(' + ')}</b>`);
   if (done.length) rows.push(`\n✅ Saldadas: ${done.map((d) => esc(d.name)).join(', ')}`);
   return rows.join('\n') || 'Todo saldado 🎉';
+}
+
+// ── plan del mes ──
+/** Compact for lists: "$300", "$18,20", "4.000 Bs" (USDT reads as dollars). */
+export const amt = (n: number, cur: string) => (cur === 'VES' ? money(Math.round(n), 'VES') : `$${nf(n, Math.abs(n % 1) > 0.004 ? 2 : 0)}`);
+const signed = (n: number, cur: string) => `${n > 0 ? '+' : '−'}${amt(Math.abs(n), cur)}`;
+const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
+
+/** One plan line for /plan and the reminders. */
+export function planLine(v: EntryView): string {
+  const e = v.emoji ?? (v.kind === 'bill' ? '🧾' : '💰');
+  if (v.kind === 'envelope') {
+    const over = v.status === 'over' ? ` 🔴 ${signed(v.diff, v.currency)}` : '';
+    return `${e} ${esc(v.name)} — ${amt(v.spent, v.currency)} de ${amt(v.planned, v.currency)} (${pct(v.spentUsd, v.plannedUsd)}%)${over}`;
+  }
+  if (v.status === 'skipped') return `⏭️ ${esc(v.name)} — este mes no`;
+  if (v.status === 'paid') {
+    const d = Math.abs(v.diff) >= 0.01 * Math.max(1, v.planned) ? ` (${signed(v.diff, v.currency)})` : '';
+    return `✅ ${esc(v.name)} — ${amt(v.planned, v.currency)} → pagaste ${amt(v.spent, v.currency)}${d}`;
+  }
+  const late = /^venció/.test(v.dueLabel), soon = /hoy|mañana|tienes hasta/.test(v.dueLabel);
+  const icon = late ? '⚠️' : soon ? '⏰' : '◻️';
+  const part = v.status === 'partial' ? ` · llevas ${amt(v.spent, v.currency)}` : '';
+  return `${icon} ${esc(v.name)} — ${amt(v.planned, v.currency)}${part} · ${v.dueLabel}`;
+}
+
+/** /plan: totals, bills (unpaid first, by due date), envelopes, what fell outside the plan. */
+export function planText(m: MonthView): string {
+  if (!m.entries.length) return `📅 No tienes plan para ${m.label} todavía.
+Dime «agrega alquiler 300$ del 1 al 5 al plan» o créalo en el panel.`;
+  const t = m.totals;
+  const bills = m.entries.filter((v) => v.kind === 'bill');
+  const rank = (v: EntryView) => (v.status === 'paid' ? 2 : v.status === 'skipped' ? 3 : 0);
+  bills.sort((a, b) => rank(a) - rank(b) || (a.dueFrom ?? '9999').localeCompare(b.dueFrom ?? '9999'));
+  const envs = m.entries.filter((v) => v.kind === 'envelope');
+  const head = m.isCurrent
+    ? `Presupuesto <b>${usd(t.plannedUsd)}</b> · llevas ${usd(t.allSpentUsd)} (${pct(t.allSpentUsd, t.plannedUsd)}%) · pronóstico ${usd(t.allForecastUsd)}`
+    : `Presupuesto <b>${usd(t.plannedUsd)}</b> · gastado ${usd(t.allSpentUsd)}`;
+  const rows = [`📅 <b>Plan de ${m.label}</b>`, head];
+  if (m.isCurrent && t.allForecastUsd > t.plannedUsd * 1.02) rows.push(`🔺 Vas ${usd(t.allForecastUsd - t.plannedUsd)} por encima del plan`);
+  if (bills.length) rows.push('', `<b>Pagos</b> (${t.billsPaid}/${t.bills} pagados)`, ...bills.map(planLine));
+  if (envs.length) rows.push('', '<b>Presupuestos</b>', ...envs.map(planLine));
+  if (t.unplannedUsd > 0.005) rows.push('', `Fuera del plan: <b>${usd(t.unplannedUsd)}</b>${m.unplanned.length ? ` (${m.unplanned.slice(0, 3).map((u) => `${esc(u.label)} ${usd(u.total)}`).join(', ')})` : ''}`);
+  return rows.join('\n');
+}
+
+/** "¿Ya pagaste?" — one bill with its window, or several grouped in one message. */
+export function planDueText(vs: EntryView[]): string {
+  if (vs.length === 1) {
+    const v = vs[0];
+    const part = v.status === 'partial' ? `\nLlevas ${amt(v.spent, v.currency)}, faltan ${amt(v.planned - v.spent, v.currency)}.` : '';
+    const when = v.dueFrom ? v.dueLabel[0].toUpperCase() + v.dueLabel.slice(1) : 'No lo has registrado este mes';
+    return `📅 <b>${esc(v.name)}</b> · ${amt(v.planned, v.currency)}\n${when}.${part} ¿Ya lo pagaste?`;
+  }
+  return `📅 <b>Pagos del plan</b> sin registrar:\n${vs.map(planLine).join('\n')}\n\nToca los que ya pagaste (por lo planificado). Si fue otro monto, dímelo: «pagué la luz 18$».`;
+}
+
+/** After "ya pagué": planned vs what really went out (rates/estimates). */
+export function paidText(v: EntryView): string {
+  const d = v.diff, close = Math.abs(d) < 0.01 * Math.max(1, v.planned);
+  const how = close ? 'justo lo planificado 👌' : `${signed(d, v.currency)} ${d > 0 ? 'más' : 'menos'} de lo planificado`;
+  const done = v.status === 'paid' ? '✅' : '🟡';
+  return `${done} <b>${esc(v.name)}</b>: planificado ${amt(v.planned, v.currency)}, pagaste ${amt(v.spent, v.currency)} (${how}).${v.status === 'partial' ? ` Faltan ${amt(v.planned - v.spent, v.currency)}.` : ''}`;
+}
+
+/** 1st of the month: how last month closed + what this one looks like. */
+export function monthTurnText(prev: MonthView, cur: MonthView): string {
+  const rows: string[] = [];
+  const p = prev.totals;
+  if (prev.entries.length) {
+    const d = p.allSpentUsd - p.plannedUsd;
+    rows.push(`🗓️ <b>Cerraste ${prev.label}</b>: planificaste ${usd(p.plannedUsd)} y gastaste ${usd(p.allSpentUsd)} (${d >= 0 ? '+' : '−'}${usd(Math.abs(d))}).`);
+    if (p.unplannedUsd > 0.005) rows.push(`Fuera del plan: ${usd(p.unplannedUsd)}.`);
+    const over = prev.entries.filter((v) => !v.skipped && v.diffUsd > 1).sort((a, b) => b.diffUsd - a.diffUsd).slice(0, 3);
+    if (over.length) rows.push(`Lo que más se pasó: ${over.map((v) => `${esc(v.name)} +${usd(v.diffUsd)}`).join(', ')}.`);
+    rows.push('');
+  }
+  const bills = cur.entries.filter((v) => v.kind === 'bill' && !v.skipped);
+  const first = bills.filter((v) => v.dueFrom).sort((a, b) => a.dueFrom!.localeCompare(b.dueFrom!)).slice(0, 3);
+  rows.push(`📅 <b>Plan de ${cur.label}: ${usd(cur.totals.plannedUsd)}</b> · ${bills.length} pagos, ${cur.entries.filter((v) => v.kind === 'envelope').length} presupuestos.`);
+  if (first.length) rows.push(`Primeros: ${first.map((v) => `${esc(v.name)} (${v.dueFrom!.slice(8, 10)}/${v.dueFrom!.slice(5, 7)})`).join(', ')}.`);
+  rows.push('Te aviso cuando toque cada pago. /plan para verlo.');
+  return rows.join('\n');
 }
 
 /** Callback data must be ≤64 bytes. */

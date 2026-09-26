@@ -29,6 +29,7 @@ model Account {
   incoming      Transaction[] @relation("to")
   bags          Bag[]
   merchantRules MerchantRule[]
+  planItems     PlanItem[]
 
   @@map("accounts")
 }
@@ -59,6 +60,7 @@ model Category {
 
   transactions  Transaction[]
   merchantRules MerchantRule[]
+  planItems     PlanItem[]
 
   @@map("categories")
 }
@@ -111,6 +113,8 @@ model Transaction {
   bag           Bag?      @relation(fields: [bagId], references: [id])
   debtId        Int?      /// expense that pays (part of) this debt
   debt          Debt?     @relation(fields: [debtId], references: [id])
+  planEntryId   Int?      /// expense that pays (or spends from) this month's plan line
+  planEntry     PlanEntry? @relation(fields: [planEntryId], references: [id])
   confidence    Float?
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt @db.Timestamptz
@@ -135,6 +139,54 @@ model Debt {
   payments Transaction[]
 
   @@map("debts")
+}
+
+/// A line of the monthly plan ("Alquiler 300 USDT del 1 al 5").
+/// kind: bill (one payment with a due window; reminders + "¿ya pagaste?") | envelope (spent bit by bit: mercado, gasolina)
+model PlanItem {
+  id         Int       @id @default(autoincrement())
+  name       String
+  emoji      String?
+  kind       String    @default("bill")
+  amount     Decimal   @db.Decimal(24, 8) /// planned per month, in `currency`
+  currency   String    /// USD | USDT | VES
+  dueDay     Int?      /// 1-31 (clamped to the month); null = any time in the month
+  dueDayEnd  Int?      /// window end ("del 1 al 5"); null = same as dueDay
+  remindDays Int       @default(1) /// days before dueDay to send the first reminder
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  accountId  Int?      /// where it's usually paid from
+  account    Account?  @relation(fields: [accountId], references: [id])
+  note       String?
+  active     Boolean   @default(true)
+  sort       Int       @default(0)
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+
+  entries PlanEntry[]
+
+  @@map("plan_items")
+}
+
+/// One month of a PlanItem. Paid/spent is computed from the linked transactions (voiding one un-pays it).
+model PlanEntry {
+  id          Int       @id @default(autoincrement())
+  itemId      Int
+  item        PlanItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  month       DateTime  @db.Date /// first day of the month
+  planned     Decimal   @db.Decimal(24, 8)
+  currency    String
+  dueFrom     DateTime? @db.Date
+  dueTo       DateTime? @db.Date
+  overridden  Boolean   @default(false) /// planned/due changed for this month only: item edits leave it alone
+  skipped     Boolean   @default(false) /// "este mes no"
+  remindedOn  DateTime? @db.Date
+  snoozeUntil DateTime? @db.Date
+
+  transactions Transaction[]
+
+  @@unique([itemId, month])
+  @@index([month])
+  @@map("plan_entries")
 }
 
 model TransactionVersion {

@@ -9,11 +9,12 @@ import { InsightsService } from '../insights/insights.service';
 import { BagsService } from '../ledger/bags.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { addMonths, monthKey, PlanService, type EntryView } from '../ledger/plan.service';
 import { BotService } from './bot.service';
-import { atLocal, cb, dayLabel, esc, inQuiet, money, startOfDay, startOfWeek, usd } from './ui';
+import { atLocal, cb, dayLabel, esc, inQuiet, money, monthTurnText, planDueText, startOfDay, startOfWeek, usd } from './ui';
 
 const TZ = 'America/Caracas';
-const ORDER = ['p2p_intro', 'card_delta', 'pay_classify', 'ask_account', 'reconcile', 'bag_followup'];
+const ORDER = ['p2p_intro', 'card_delta', 'pay_classify', 'ask_account', 'plan_due', 'reconcile', 'bag_followup'];
 const CAPPED = ['reconcile', 'bag_followup'];
 type Bagish = { id: number; amountVes: unknown; remainingVes: unknown; openedAt: Date; account: { name: string }; _count: { allocations: number } };
 
@@ -46,6 +47,7 @@ export class NudgesService implements OnModuleInit {
     private insights: InsightsService,
     private llm: LlmService,
     private emb: EmbeddingsService,
+    private plan: PlanService,
   ) {}
 
   onModuleInit() {
@@ -93,7 +95,10 @@ export class NudgesService implements OnModuleInit {
     const rec = due.filter((p) => p.kind === 'reconcile');
     const dupes = rec.filter((p) => rec.some((q) => q.refId === p.refId && q.id > p.id));
     await cancel(dupes.map((p) => p.id));
-    const others = due.filter((p) => p.kind !== 'bag_followup' && !dupes.includes(p)).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
+    // Plan reminders: one message for all bills due now (not capped: Randy asked for them), paid/skipped ones dropped.
+    const planDue = due.filter((p) => p.kind === 'plan_due');
+    if (planDue.length) await this.sendPlanDue(planDue);
+    const others = due.filter((p) => p.kind !== 'bag_followup' && p.kind !== 'plan_due' && !dupes.includes(p)).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
     for (const p of others) {
       const capped = CAPPED.includes(p.kind);
       if (capped && budget <= 0) continue;
@@ -118,6 +123,28 @@ export class NudgesService implements OnModuleInit {
     else k.text('Recordar mañana', cb('n', 'tmrw', pid));
     try {
       const m = await this.botSvc.send(followupText(live.map((l) => l.bag), now), k);
+      await this.mark(live.map((l) => l.p.id), m.message_id);
+    } catch (e) { for (const l of live) await this.failed(l.p, e); }
+  }
+
+  private async sendPlanDue(prompts: PendingPrompt[]) {
+    const live: { p: PendingPrompt; v: EntryView }[] = [];
+    const dead: number[] = [];
+    for (const p of prompts) {
+      const v = p.refId ? await this.plan.entry(p.refId).catch(() => null) : null;
+      if (v && (v.status === 'pending' || v.status === 'partial') && !live.some((l) => l.v.id === v.id)) live.push({ p, v }); else dead.push(p.id);
+    }
+    if (dead.length) await this.db.pendingPrompt.updateMany({ where: { id: { in: dead } }, data: { cancelledAt: new Date() } });
+    if (!live.length) return;
+    let k: InlineKeyboard;
+    if (live.length === 1) k = await this.botSvc.planKeyboard(live[0].v);
+    else {
+      k = new InlineKeyboard();
+      live.slice(0, 8).forEach(({ v }, i) => { k.text(`✅ ${v.name}`.slice(0, 30), cb('pl', 'ok', v.id, 'g')); if (i % 2) k.row(); });
+      k.row().text('⏰ Mañana', cb('pl', 'tma', live[0].p.id));
+    }
+    try {
+      const m = await this.botSvc.send(planDueText(live.map((l) => l.v)), k);
       await this.mark(live.map((l) => l.p.id), m.message_id);
     } catch (e) { for (const l of live) await this.failed(l.p, e); }
   }
@@ -271,6 +298,22 @@ export class NudgesService implements OnModuleInit {
       // ask_account
       case 'acc': await answer(); if (msgId) await this.botSvc.edit(msgId, '👌'); return this.botSvc.setTxBank(p.refId!, arg!);
     }
+  }
+
+  // ── plan del mes ────────────────────────────────────────────────────────
+  /** 09:00: the 1st gets how last month closed; every day, bills due get a "¿ya pagaste?" (sent by the dispatcher). */
+  @Cron('0 9 * * *', { timeZone: TZ })
+  async planDaily(now = new Date()) {
+    if (!this.botSvc.bot) return;
+    try {
+      const key = monthKey(now);
+      if (now.toLocaleDateString('en-CA', { timeZone: TZ }).endsWith('-01')) {
+        const [prev, cur] = await Promise.all([this.plan.month(addMonths(key, -1), { history: false, now }), this.plan.month(key, { history: false, now })]);
+        if (prev.entries.length || cur.entries.length) await this.botSvc.send(monthTurnText(prev, cur));
+      }
+      const due = await this.plan.dueReminders(now);
+      if (due.length) await this.db.pendingPrompt.createMany({ data: due.map(({ entry, reason }) => ({ kind: 'plan_due', refId: entry.id, payload: { name: entry.name, reason }, dueAt: now })) });
+    } catch (e) { this.log.error(e); }
   }
 
   // ── summaries ───────────────────────────────────────────────────────────

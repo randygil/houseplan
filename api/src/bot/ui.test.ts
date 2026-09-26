@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { followupText } from './nudges.service';
-import { debtsText, cb, dayLabel, inQuiet, money, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard } from './ui';
+import type { EntryView, MonthView } from '../ledger/plan.service';
+import { debtsText, cb, dayLabel, inQuiet, money, monthTurnText, paidText, parseWhen, planDueText, planLine, planText, startOfDay, startOfMonth, startOfWeek, txCard } from './ui';
 
 const now = new Date('2026-09-22T14:00:00Z'); // martes 10:00 Caracas
 
@@ -74,4 +75,51 @@ test('debtsText: abiertas con lo que queda, total por moneda, saldadas aparte', 
   assert.match(t, /Total: <b>\$2\.181,00<\/b>/);
   assert.match(t, /Saldadas: Tarjeta/);
   assert.match(debtsText([]), /No tienes deudas/);
+});
+
+const ev = (p: Partial<EntryView>): EntryView => ({
+  id: 1, itemId: 1, month: '2026-10', name: 'Alquiler', emoji: '🔑', kind: 'bill', categoryId: null, accountId: null, note: null,
+  currency: 'USDT', planned: 300, plannedUsd: 300, spent: 0, spentUsd: 0, diff: -300, diffUsd: -300, status: 'pending',
+  dueFrom: '2026-10-01', dueTo: '2026-10-05', dueLabel: 'toca del 01/10 al 05/10 (en 5 días)', remindDays: 1, overridden: false, skipped: false,
+  remindedOn: null, snoozeUntil: null, forecastUsd: 300, expectedUsd: 0, avgUsd: null, itemAmount: 300, txs: [], ...p,
+});
+const month = (entries: EntryView[], t: Partial<MonthView['totals']> = {}): MonthView => ({
+  month: '2026-10', label: 'octubre de 2026', days: 31, elapsed: 10, today: '2026-10-10', isCurrent: true, rate: 200,
+  totals: { plannedUsd: 977, spentUsd: 400, forecastUsd: 990, leftUsd: 577, unplannedUsd: 20, unplannedForecastUsd: 60, allSpentUsd: 420, allForecastUsd: 1050, bills: 2, billsPaid: 1, ...t },
+  unplanned: [{ label: '🎉 Ocio', total: 20, count: 2 }], entries,
+});
+
+test('plan: líneas de pago y presupuesto', () => {
+  assert.equal(planLine(ev({})), '◻️ Alquiler — $300 · toca del 01/10 al 05/10 (en 5 días)');
+  assert.equal(planLine(ev({ dueLabel: 'vence hoy' })), '⏰ Alquiler — $300 · vence hoy');
+  assert.equal(planLine(ev({ dueLabel: 'venció hace 2 días' })), '⚠️ Alquiler — $300 · venció hace 2 días');
+  assert.equal(planLine(ev({ name: 'Luz', planned: 15, spent: 18.2, diff: 3.2, status: 'paid' })), '✅ Luz — $15 → pagaste $18,20 (+$3,20)');
+  assert.equal(planLine(ev({ status: 'paid', spent: 300, diff: 0 })), '✅ Alquiler — $300 → pagaste $300');
+  assert.equal(planLine(ev({ status: 'skipped' })), '⏭️ Alquiler — este mes no');
+  assert.equal(planLine(ev({ kind: 'envelope', name: 'Mercado', emoji: '🛒', planned: 200, plannedUsd: 200, spent: 120, spentUsd: 120, status: 'partial' })), '🛒 Mercado — $120 de $200 (60%)');
+  assert.equal(planLine(ev({ kind: 'envelope', name: 'Gatos', emoji: '🐱', planned: 60, plannedUsd: 60, spent: 75, spentUsd: 75, diff: 15, status: 'over' })), '🐱 Gatos — $75 de $60 (125%) 🔴 +$15');
+});
+
+test('plan: /plan, recordatorio y "ya pagué"', () => {
+  const txt = planText(month([ev({ status: 'paid', spent: 300, diff: 0 }), ev({ id: 2, name: 'Starlink', planned: 55, dueLabel: 'vence hoy' })]));
+  assert.match(txt, /Plan de octubre de 2026/);
+  assert.match(txt, /pronóstico \$1\.050,00/);
+  assert.match(txt, /Vas \$73,00 por encima del plan/);
+  assert.ok(txt.indexOf('Starlink') < txt.indexOf('Alquiler'), 'unpaid first');
+  assert.match(txt, /Fuera del plan: <b>\$20,00<\/b> \(🎉 Ocio \$20,00\)/);
+  assert.match(planText(month([])), /No tienes plan/);
+  assert.equal(planDueText([ev({})]), '📅 <b>Alquiler</b> · $300\nToca del 01/10 al 05/10 (en 5 días). ¿Ya lo pagaste?');
+  assert.match(planDueText([ev({ dueFrom: null, dueTo: null, dueLabel: 'sin fecha' })]), /No lo has registrado este mes/);
+  assert.match(planDueText([ev({}), ev({ id: 2, name: 'Luz' })]), /Pagos del plan<\/b> sin registrar:\n◻️ Alquiler.*\n◻️ Luz/);
+  assert.equal(paidText(ev({ name: 'Luz', planned: 15, spent: 18.2, diff: 3.2, status: 'paid' })), '✅ <b>Luz</b>: planificado $15, pagaste $18,20 (+$3,20 más de lo planificado).');
+  assert.equal(paidText(ev({ spent: 300, diff: 0, status: 'paid' })), '✅ <b>Alquiler</b>: planificado $300, pagaste $300 (justo lo planificado 👌).');
+  assert.match(paidText(ev({ spent: 100, diff: -200, status: 'partial' })), /^🟡 .*Faltan \$200\.$/);
+});
+
+test('plan: cambio de mes', () => {
+  const prev = month([ev({ kind: 'envelope', name: 'Mercado', diffUsd: 40 }), ev({ name: 'Gatos', diffUsd: 15 })], { plannedUsd: 977, allSpentUsd: 1012, unplannedUsd: 80 });
+  const t = monthTurnText({ ...prev, label: 'septiembre de 2026' }, month([ev({})]));
+  assert.match(t, /Cerraste septiembre de 2026<\/b>: planificaste \$977,00 y gastaste \$1\.012,00 \(\+\$35,00\)/);
+  assert.match(t, /Lo que más se pasó: Mercado \+\$40,00, Gatos \+\$15,00/);
+  assert.match(t, /Primeros: Alquiler \(01\/10\)/);
 });

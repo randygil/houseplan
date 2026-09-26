@@ -1,7 +1,7 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../db/prisma.service';
 import { FxService } from '../fx/fx.service';
-import type { Account, Category, Debt, Prisma, Transaction } from '../generated/prisma/client';
+import type { Account, Category, Debt, PlanEntry, PlanItem, Prisma, Transaction } from '../generated/prisma/client';
 import { BagsService } from './bags.service';
 import { CategoriesService } from './categories.service';
 
@@ -9,20 +9,22 @@ export type TxInput = {
   type: 'transfer' | 'expense' | 'income' | 'fee'; status?: 'pending' | 'confirmed';
   occurredAt: Date; amount: number; currency: string;
   fromAccountId?: number; toAccountId?: number; toAmount?: number;
-  categoryId?: number; merchant?: string; note?: string; debtId?: number;
+  categoryId?: number; merchant?: string; note?: string; debtId?: number; planEntryId?: number;
   source: string; rawEventId?: number; confidence?: number; fxRate?: number; fxSource?: string;
 };
-export type TxView = Transaction & { category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt: Debt | null };
+export type TxView = Transaction & {
+  category: Category | null; fromAccount: Account | null; toAccount: Account | null; debt: Debt | null; planEntry: (PlanEntry & { item: PlanItem }) | null;
+};
 type Db = Prisma.TransactionClient;
 type Patch = Omit<Partial<TxInput>, 'status'> & { status?: string };
 
-export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true, debt: true } as const;
+export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true, debt: true, planEntry: { include: { item: true } } } as const;
 const isUsd = (c: string) => c === 'USD' || c === 'USDT';
 // Changing any of these re-runs FX + bag allocation.
 const MONEY_KEYS = ['type', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'occurredAt', 'fxRate'] as const;
 const FIELDS = [
   'type', 'status', 'occurredAt', 'amount', 'currency', 'fromAccountId', 'toAccountId', 'toAmount', 'categoryId',
-  'merchant', 'note', 'debtId', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
+  'merchant', 'note', 'debtId', 'planEntryId', 'source', 'rawEventId', 'confidence', 'fxRate', 'fxSource',
 ] as const;
 
 @Injectable()

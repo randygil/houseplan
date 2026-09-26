@@ -14,15 +14,16 @@ import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
 import { DebtsService } from '../ledger/debts.service';
 import { LedgerService, TxInput, TxView } from '../ledger/ledger.service';
-import { cb, dayLabel, debtsText, esc, hhmm, money, parseWhen, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
+import { currencyIn, monthKey, PlanService, sameMoney, type EntryView } from '../ledger/plan.service';
+import { amt, cb, dayLabel, debtsText, esc, hhmm, money, paidText, parseWhen, planDueText, planText, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
 type Field = 'amount' | 'merchant' | 'note' | 'date';
-export type Awaiting = { kind: Field | 'balance'; txId?: number; accountId?: number; promptId?: number; msgId?: number; at: number };
+export type Awaiting = { kind: Field | 'balance' | 'plan_amount'; txId?: number; accountId?: number; promptId?: number; entryId?: number; msgId?: number; at: number };
 type Mode = 'view' | 'edit' | 'acc' | 'cat';
 
 const COMMANDS = [
   ['saldo', 'Saldos de tus cuentas'], ['hoy', 'Gastos de hoy'], ['semana', 'Gastos de la semana'], ['mes', 'Gastos del mes'],
-  ['ultimos', 'Últimos movimientos'], ['deudas', 'Lo que debes'], ['deshacer', 'Deshacer el último cambio'], ['pendientes', 'Borradores por confirmar'],
+  ['plan', 'Plan del mes: pagos y presupuestos'], ['ultimos', 'Últimos movimientos'], ['deudas', 'Lo que debes'], ['deshacer', 'Deshacer el último cambio'], ['pendientes', 'Borradores por confirmar'],
   ['conciliar', 'Cuadrar un banco o efectivo'], ['panel', 'Abrir el panel'], ['sync', 'Sincronizar Binance'],
   ['backfill', 'Importar historial de Binance'], ['ajustes', 'Ajustes'],
 ] as const;
@@ -54,6 +55,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     private emb: EmbeddingsService,
     private transcriber: TranscribeService,
     private debts: DebtsService,
+    private plan: PlanService,
   ) {
     // Allowlist first, in the constructor, so it precedes every handler (NudgesService registers its own).
     this.bot?.use(async (ctx, next) => { if (ctx.from?.id === this.chatId) await next(); });
@@ -82,6 +84,11 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       await ctx.answerCallbackQuery().catch(() => {});
       const [, act, id, arg] = ctx.callbackQuery.data.split(':');
       await this.onTxButton(act, Number(id), arg, ctx.callbackQuery.message?.message_id);
+    }));
+    bot.callbackQuery(/^pl:/, (ctx) => safe(async () => {
+      await ctx.answerCallbackQuery().catch(() => {});
+      const [, act, id, arg] = ctx.callbackQuery.data.split(':');
+      await this.onPlanButton(act, Number(id), arg, ctx.callbackQuery.message?.message_id);
     }));
     bot.callbackQuery(/^p:/, (ctx) => safe(async () => {
       await ctx.answerCallbackQuery().catch(() => {});
@@ -265,6 +272,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     ultimos: () => this.ultimos(),
     pendientes: () => this.pendientes(),
     deudas: async () => this.send(debtsText(await this.debts.list())),
+    plan: () => this.planView(),
     conciliar: () => this.conciliar(),
     panel: () => this.panel(),
   };
@@ -307,6 +315,29 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       answer_prompt: async (a) => ok(this.answerPrompt(await parse({
         intent: 'answer_prompt', items: [a], balance: a.amount != null ? { account: a.account, amount: a.amount } : null, confidence: 0.8,
       }), source)),
+      pay_plan: async (a) => {
+        const accs = await this.ledger.balances();
+        const code = a.account ? normAccount(a.account, accs.map((x) => x.code), normCurrency(a.currency)) : null;
+        return this.payPlan(Number(a.entry_id), {
+          amount: parseAmount(a.amount) ?? undefined, currency: normCurrency(a.currency),
+          accountId: accs.find((x) => x.code === code)?.accountId, occurredAt: a.occurred_at ? parseLocalDate(a.occurred_at, new Date()) : undefined,
+        }, undefined, source);
+      },
+      plan_set: (a) => this.setPlanItem(a),
+      plan_month: async (a) => {
+        const id = Number(a.entry_id), amount = parseAmount(a.amount);
+        await this.plan.updateEntry(id, { ...(amount != null && { planned: amount }), ...(typeof a.skip === 'boolean' && { skipped: a.skip }) });
+        const v = await this.plan.entry(id);
+        await this.send(v.skipped ? `⏭️ <b>${esc(v.name)}</b>: este mes no.` : `📅 <b>${esc(v.name)}</b> este mes: ${amt(v.planned, v.currency)}.`);
+        return { id, name: v.name, planned: v.planned, skipped: v.skipped };
+      },
+      plan_remove: async (a) => {
+        const it = await this.plan.findItem(String(a.name ?? ''));
+        if (!it) throw new Error(`no hay línea «${a.name}» en el plan`);
+        await this.plan.removeItem(it.id);
+        await this.send(`🗑️ Saqué <b>${esc(it.name)}</b> del plan (los meses pasados quedan).`);
+        return { removed: it.name };
+      },
       sync_binance: () => ok(this.sync()),
       show: async (a) => {
         const v = this.views[String(a.view)];
@@ -324,6 +355,12 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       const n = parseAmount(t);
       if (n == null) return false;
       await this.reconcile(a.accountId!, n, a.promptId);
+      return true;
+    }
+    if (a.kind === 'plan_amount') {
+      const n = parseAmount(t);
+      if (n == null) return false;
+      await this.payPlan(a.entryId!, { amount: n, currency: currencyIn(t) }, a.msgId);
       return true;
     }
     const id = a.txId!;
@@ -355,14 +392,16 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         type, status: 'pending', occurredAt: it.occurredAt, amount: it.amount, currency: it.currency ?? 'VES',
         ...(type === 'income' ? { toAccountId: it.accountId ?? undefined } : { fromAccountId: it.accountId ?? undefined }),
         categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined,
-        debtId: it.debtId ?? undefined, source, confidence: p.confidence,
+        debtId: it.debtId ?? undefined, planEntryId: it.planEntryId ?? undefined, source, confidence: p.confidence,
       });
       const auto = p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
       if (auto) await this.ledger.confirm(tx.id);
       await this.showTx(tx.id);
       if (auto) await this.afterConfirm(tx.id);
       const debt = it.debtId ? await this.debts.get(it.debtId) : null;
+      const plan = it.planEntryId ? await this.plan.entry(it.planEntryId) : null;
       out.push({
+        ...(plan && { plan: { name: plan.name, planned: plan.planned, paid: +plan.spent.toFixed(2), currency: plan.currency, status: plan.status } }),
         id: tx.id, type, status: auto ? 'confirmed' : 'pending', amount: it.amount, currency: it.currency, account: it.account, category: it.categoryPath,
         ...(debt && { debt: { id: debt.id, name: debt.name, remaining: `${+debt.remaining.toFixed(2)} ${debt.currency}` } }),
       });
@@ -496,6 +535,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       if (it.categoryId) await this.afterConfirm(pending.refId);
       return;
     }
+    if (pending?.kind === 'plan_due' && pending.refId && amount != null) {
+      return this.payPlan(pending.refId, { amount, currency: p.items[0]?.currency ?? null }, undefined, source);
+    }
     if (pending?.kind === 'ask_account' && pending.refId) {
       const code = normAccount(p.items[0]?.account ?? p.balance?.account ?? '', ['mercantil', 'bdv'], 'VES');
       if (code) { await done(); return this.setTxBank(pending.refId, code); }
@@ -528,6 +570,109 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (p.kind === 'receipt' && p.items.length) return this.addItems(p, 'manual_photo');
     if (p.kind === 'balance' && p.balance) return this.setBalance(p.balance, true);
     return this.send('📷 No vi una factura ni un saldo en esa foto 🤔');
+  }
+
+  // ── plan del mes ────────────────────────────────────────────────────────
+  private async planView() {
+    const m = await this.plan.month(monthKey(new Date()));
+    const k = new InlineKeyboard();
+    // one-tap "ya pagué" for the unpaid bills that are due soonest
+    const open = m.entries.filter((v) => v.kind === 'bill' && (v.status === 'pending' || v.status === 'partial'))
+      .sort((a, b) => (a.dueFrom ?? '9999').localeCompare(b.dueFrom ?? '9999')).slice(0, 6);
+    open.forEach((v, i) => { k.text(`✅ ${v.name}`.slice(0, 30), cb('pl', 'ok', v.id, 'g')); if (i % 2) k.row(); });
+    return this.send(planText(m), open.length ? k : undefined);
+  }
+
+  /** Buttons of a single "¿ya pagaste?": pay the plan, type another amount, snooze, skip. */
+  async planKeyboard(v: EntryView) {
+    const acc = v.accountId ? await this.db.account.findUnique({ where: { id: v.accountId } }) : null;
+    const exact = !acc || sameMoney(acc.currency, v.currency);
+    const left = v.status === 'partial' ? v.planned - v.spent : v.planned;
+    return new InlineKeyboard()
+      .text(exact ? `✅ Pagué ${amt(left, v.currency)}` : '✅ Ya pagué', cb('pl', 'ok', v.id)).text('💵 Otro monto', cb('pl', 'amt', v.id)).row()
+      .text('⏰ Mañana', cb('pl', 'tm', v.id)).text('⏭️ Este mes no', cb('pl', 'sk', v.id));
+  }
+
+  /**
+   * Records the payment of a plan line and shows planned vs paid. When the usual account is in another currency
+   * and no amount was given, asks for it (with today's-rate estimate). Returns a summary for the agent.
+   */
+  async payPlan(entryId: number, o: { amount?: number; currency?: string | null; accountId?: number; occurredAt?: Date }, msgId?: number, source = 'plan') {
+    const before = await this.plan.entry(entryId);
+    const r = await this.plan.pay(entryId, { ...o, source });
+    await this.db.pendingPrompt.updateMany({ where: { kind: 'plan_due', refId: entryId, answeredAt: null }, data: { answeredAt: new Date() } });
+    if ('need' in r && r.need) {
+      this.awaiting = { kind: 'plan_amount', entryId, msgId, at: Date.now() };
+      const est = r.need.estimate ? ` (a la tasa de hoy serían ~${money(Math.round(r.need.estimate * 100) / 100, r.need.currency)})` : '';
+      await this.send(`💵 ¿Cuánto pagaste por <b>${esc(before.name)}</b> en ${r.need.currency === 'VES' ? 'Bs' : r.need.currency}?${est}`);
+      return { asked: `monto en ${r.need.currency}` };
+    }
+    const v = await this.plan.entry(entryId);
+    if (msgId) await this.edit(msgId, paidText(v));
+    await this.showTx(r.tx!.id, msgId ? {} : { prefix: paidText(v) });
+    if (r.tx!.status === 'confirmed') await this.afterConfirm(r.tx!.id);
+    return { id: r.tx!.id, plan: v.name, planned: v.planned, paid: +v.spent.toFixed(2), diff: +v.diff.toFixed(2), currency: v.currency, status: v.status, txStatus: r.tx!.status };
+  }
+
+  private async onPlanButton(act: string, id: number, arg: string | undefined, msgId?: number) {
+    const answered = () => this.db.pendingPrompt.updateMany({ where: { kind: 'plan_due', refId: id, answeredAt: null }, data: { answeredAt: new Date() } });
+    switch (act) {
+      case 'ok': return this.payPlan(id, {}, arg === 'g' ? undefined : msgId); // 'g' = from a list: keep that message's other buttons
+      case 'amt': {
+        const v = await this.plan.entry(id);
+        this.awaiting = { kind: 'plan_amount', entryId: id, msgId, at: Date.now() };
+        return this.send(`💵 ¿Cuánto pagaste por <b>${esc(v.name)}</b>? (ej. «${v.currency === 'VES' ? '12.500' : Math.round(v.planned + 5)}» o «11.500 bs»)`);
+      }
+      case 'tm': {
+        await this.plan.snooze(id);
+        await answered();
+        const v = await this.plan.entry(id);
+        return msgId && this.edit(msgId, `⏰ Te recuerdo <b>${esc(v.name)}</b> mañana.`);
+      }
+      case 'tma': { // grouped reminder: id = one of its prompts
+        const p = await this.db.pendingPrompt.findUnique({ where: { id } });
+        const group = p?.telegramMessageId ? await this.db.pendingPrompt.findMany({ where: { telegramMessageId: p.telegramMessageId, kind: 'plan_due' } }) : p ? [p] : [];
+        for (const g of group) {
+          const v = g.refId ? await this.plan.entry(g.refId).catch(() => null) : null;
+          if (v && (v.status === 'pending' || v.status === 'partial')) await this.plan.snooze(v.id);
+        }
+        await this.db.pendingPrompt.updateMany({ where: { id: { in: group.map((g) => g.id) } }, data: { answeredAt: new Date() } });
+        return msgId && this.edit(msgId, '⏰ Te recuerdo mañana los que falten.');
+      }
+      case 'sk': {
+        await this.plan.updateEntry(id, { skipped: true });
+        await answered();
+        const v = await this.plan.entry(id);
+        return msgId && this.edit(msgId, `⏭️ <b>${esc(v.name)}</b>: este mes no. No te lo recuerdo más.`);
+      }
+    }
+  }
+
+  /** Agent's plan_set: upsert a plan line by name. */
+  private async setPlanItem(a: any) {
+    const name = typeof a.name === 'string' ? a.name.trim() : '';
+    if (!name) throw new Error('falta name');
+    const accs = await this.ledger.balances();
+    const code = a.account ? normAccount(a.account, accs.map((x) => x.code), normCurrency(a.currency)) : null;
+    const cat = a.category ? await this.cats.byPath(String(a.category)) : null;
+    const day = (v: unknown) => (v === null ? null : v === undefined ? undefined : Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 31 ? Number(v) : undefined);
+    const patch = {
+      ...(parseAmount(a.amount) != null && { amount: parseAmount(a.amount)! }),
+      ...(normCurrency(a.currency) && { currency: normCurrency(a.currency)! }),
+      ...((a.kind === 'bill' || a.kind === 'envelope') && { kind: a.kind as 'bill' | 'envelope' }),
+      ...(day(a.due_day) !== undefined && { dueDay: day(a.due_day)! }),
+      ...(day(a.due_day_end) !== undefined && { dueDayEnd: day(a.due_day_end)! }),
+      ...(Number.isInteger(Number(a.remind_days)) && a.remind_days != null && { remindDays: Math.min(15, Math.max(0, Number(a.remind_days))) }),
+      ...(cat && { categoryId: cat.id }),
+      ...(code && { accountId: accs.find((x) => x.code === code)!.accountId }),
+      ...(typeof a.emoji === 'string' && a.emoji.trim() && { emoji: a.emoji.trim() }),
+    };
+    const found = await this.plan.findItem(name);
+    if (!found && patch.amount == null) throw new Error('línea nueva: falta amount (pregúntalo)');
+    const item = found ? await this.plan.updateItem(found.id, patch) : await this.plan.createItem({ name, currency: 'USD', ...patch } as any);
+    const when = item.dueDay ? (item.dueDayEnd && item.dueDayEnd !== item.dueDay ? ` · del ${item.dueDay} al ${item.dueDayEnd}` : ` · el ${item.dueDay}`) : '';
+    await this.send(`📅 ${found ? 'Actualicé' : 'Agregué al plan'}: <b>${esc(item.name)}</b> · ${amt(Number(item.amount), item.currency)}${when}${item.kind === 'envelope' ? ' (presupuesto)' : ''}`);
+    return { id: item.id, name: item.name, amount: Number(item.amount), currency: item.currency, dueDay: item.dueDay, dueDayEnd: item.dueDayEnd, kind: item.kind, created: !found };
   }
 
   // ── commands ────────────────────────────────────────────────────────────

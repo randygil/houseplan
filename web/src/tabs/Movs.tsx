@@ -165,8 +165,10 @@ const toLocalInput = (iso: string) => { const d = new Date(iso); return new Date
 function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
   tx: TxView | null; onClose: () => void; cats: Category[]; accounts: Account[]; onSaved: (t: Transaction | null, old: TxView) => void
 }) {
-  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', debtId: '' })
+  const [v, setV] = useState({ amount: '', date: '', categoryId: '', accountId: '', merchant: '', note: '', debtId: '', planEntryId: '' })
   const debts = useLoad(api.debts).data ?? []
+  const txMonth = tx ? ymd(tx.occurredAt).slice(0, 7) : ''
+  const plan = useLoad(() => (tx && tx.type !== 'income' && tx.type !== 'transfer' ? api.plan(txMonth) : Promise.resolve(null)), [txMonth, tx?.type]).data
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const accKey = tx?.type === 'income' ? 'toAccountId' : 'fromAccountId'
@@ -177,7 +179,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     setV({
       amount: String(num(tx.amount)), date: toLocalInput(tx.occurredAt), categoryId: tx.categoryId ? String(tx.categoryId) : '',
       accountId: String((accKey === 'toAccountId' ? tx.toAccountId : tx.fromAccountId) ?? ''),
-      merchant: tx.merchant ?? '', note: tx.note ?? '', debtId: tx.debtId ? String(tx.debtId) : '',
+      merchant: tx.merchant ?? '', note: tx.note ?? '', debtId: tx.debtId ? String(tx.debtId) : '', planEntryId: tx.planEntryId ? String(tx.planEntryId) : '',
     })
   }, [tx, accKey])
 
@@ -195,6 +197,7 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
     [accKey]: v.accountId ? +v.accountId : undefined,
     merchant: v.merchant || undefined, note: v.note || undefined,
     debtId: (+v.debtId || null) !== (tx.debtId ?? null) ? +v.debtId || null : undefined,
+    planEntryId: (+v.planEntryId || null) !== (tx.planEntryId ?? null) ? +v.planEntryId || null : undefined,
   }), 'Guardado')
 
   return (
@@ -242,6 +245,14 @@ function EditSheet({ tx, onClose, cats, accounts, onSaved }: {
             <select value={v.debtId} onChange={(e) => setV({ ...v, debtId: e.target.value })} className={inputCls}>
               <option value="">No es pago de deuda</option>
               {debts.map((d) => <option key={d.id} value={d.id}>{d.name} · queda {fmtCur(d.remaining, d.currency)}</option>)}
+            </select>
+          </Field>
+        )}
+        {plan && plan.entries.length > 0 && (
+          <Field label="Línea del plan">
+            <select value={v.planEntryId} onChange={(e) => setV({ ...v, planEntryId: e.target.value })} className={inputCls}>
+              <option value="">Automático (por comercio o categoría)</option>
+              {plan.entries.map((p) => <option key={p.id} value={p.id}>{p.emoji ? `${p.emoji} ` : ''}{p.name} · {fmtCur(p.planned, p.currency)}{p.kind === 'bill' && p.status === 'paid' ? ' ✓' : ''}</option>)}
             </select>
           </Field>
         )}

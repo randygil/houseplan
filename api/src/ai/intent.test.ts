@@ -104,3 +104,13 @@ test('normAccount: "cuenta en Venezuela" = bdv; tarjeta de crédito no es Binanc
   assert.equal(normAccount('tarjeta', codes, null), 'binance');
   assert.equal(normAccount('tarjeta de crédito', codes, 'VES'), null);
 });
+
+test('plan: plan_entry_id en items y líneas del plan en el prompt', () => {
+  const p = normalizeIntent({ intent: 'add_expense', items: [{ amount: 57, currency: 'usdt', merchant: 'Starlink', plan_entry_id: '#12' }, { amount: 5, plan_entry_id: 'x' }] }, { now, accounts });
+  assert.equal(p.items[0].planEntryId, 12);
+  assert.equal(p.items[1].planEntryId, null);
+  const prompt = buildAgentPrompt({ now, accounts, categories: [], turns: [], recent: [], debts: [], pending: null, plan: ['- #12 Starlink [pago]: 55 USDT, pagado 0, pendiente, vence hoy'] }, '');
+  assert.match(prompt, /#12 Starlink \[pago\]/);
+  assert.match(prompt, /pay_plan \{entry_id/);
+  assert.match(buildAgentPrompt({ now, accounts, categories: [], turns: [], recent: [], debts: [], pending: null }, ''), /\(sin plan\)/);
+});

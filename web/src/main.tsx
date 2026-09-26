@@ -7,6 +7,7 @@ import Home from './tabs/Home'
 import Movs from './tabs/Movs'
 import Analysis from './tabs/Analysis'
 import Accounts from './tabs/Accounts'
+import Plan from './tabs/Plan'
 import Ask from './tabs/Ask'
 
 // ---- Telegram Mini App bootstrap + theme ----
@@ -30,6 +31,7 @@ if (tg && initData) {
 
 const TABS = [
   { id: 'inicio', label: 'Inicio', icon: 'M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6h-6v6H4a1 1 0 01-1-1z' },
+  { id: 'plan', label: 'Plan', icon: 'M4 6h16v14H4zM4 10h16M9 3v4M15 3v4M8 14h3M8 17h6' },
   { id: 'movimientos', label: 'Movimientos', icon: 'M4 6h16M4 12h16M4 18h10' },
   { id: 'analisis', label: 'Análisis', icon: 'M5 20V10M12 20V4M19 20v-7' },
   { id: 'cuentas', label: 'Cuentas', icon: 'M3 7h18v12H3zM3 10h18M7 15h4' },
@@ -86,16 +88,17 @@ function App() {
       </header>
       <main className="px-4">
         {tab === 'inicio' && <Home go={go} />}
+        {tab === 'plan' && <Plan />}
         {tab === 'movimientos' && <Movs preset={preset} />}
         {tab === 'analisis' && <Analysis />}
         {tab === 'cuentas' && <Accounts />}
         {tab === 'preguntar' && <Ask />}
       </main>
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-        <div className="mx-auto grid max-w-lg grid-cols-5">
+        <div className="mx-auto grid max-w-lg grid-cols-6">
           {TABS.map((t) => (
             <button key={t.id} onClick={() => go(t.id)}
-              className={`flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-medium ${t.id === tab ? 'text-accent' : 'text-muted'}`}>
+              className={`flex h-16 min-w-0 flex-col items-center justify-center gap-1 text-[10.5px] font-medium ${t.id === tab ? 'text-accent' : 'text-muted'}`}>
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={t.id === tab ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round"><path d={t.icon} /></svg>
               {t.label}
             </button>
