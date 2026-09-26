@@ -23,6 +23,14 @@ export const DEFAULT_VES_ACCOUNT = 'bdv';
 /** A confirmed movement must say where the money came from / went to. */
 export const missingAccount = (t: { type: string; fromAccountId?: number | null; toAccountId?: number | null }) =>
   t.type === 'income' ? !t.toAccountId : t.type === 'transfer' ? !t.fromAccountId && !t.toAccountId : !t.fromAccountId;
+/** Prisma twin of `missingAccount` ("sin cuenta" filter, bulk confirm). */
+export const MISSING_ACCOUNT_WHERE = {
+  OR: [
+    { type: { in: ['expense', 'fee'] }, fromAccountId: null },
+    { type: 'income', toAccountId: null },
+    { type: 'transfer', fromAccountId: null, toAccountId: null },
+  ],
+} satisfies Prisma.TransactionWhereInput;
 export const NO_ACCOUNT = 'Falta la cuenta: elige de dónde salió el dinero antes de confirmar.';
 
 export const TX_INCLUDE = { category: true, fromAccount: true, toAccount: true, debt: true, planEntry: { include: { item: true } } } as const;

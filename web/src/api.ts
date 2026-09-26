@@ -99,7 +99,7 @@ export type AskAnswer = {
 }
 
 export type TxQuery = Partial<{
-  from: string; to: string; categoryId: number; accountId: number; type: string; status: string
+  from: string; to: string; categoryId: number; accountId: number; noAccount: 1; type: string; status: string
   text: string; cursor: number; limit: number
 }>
 

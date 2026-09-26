@@ -159,6 +159,7 @@ export async function mock(path: string, init: RequestInit): Promise<unknown> {
     let xs = txs.filter((t) => inRange(t, q))
     const f = (k: string, fn: (t: TxView, v: string) => boolean) => { const v = q.get(k); if (v) xs = xs.filter((t) => fn(t, v)) }
     f('accountId', (t, v) => t.fromAccountId === +v || t.toAccountId === +v)
+    f('noAccount', (t) => (t.type === 'income' ? !t.toAccountId : t.type === 'transfer' ? !t.fromAccountId && !t.toAccountId : !t.fromAccountId))
     f('categoryId', (t, v) => t.categoryId === +v || t.category?.parentId === +v)
     f('type', (t, v) => t.type === v)
     f('status', (t, v) => t.status === v)

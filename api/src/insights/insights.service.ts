@@ -4,7 +4,7 @@ import { TZ, ymd } from '../fx/fx.service';
 import { Prisma, type Bag } from '../generated/prisma/client';
 import { CategoriesService } from '../ledger/categories.service';
 import { DebtsService } from '../ledger/debts.service';
-import { LedgerService, TX_INCLUDE, type TxView } from '../ledger/ledger.service';
+import { LedgerService, MISSING_ACCOUNT_WHERE, TX_INCLUDE, type TxView } from '../ledger/ledger.service';
 
 /** `to` is inclusive. */
 export type Range = { from: Date; to: Date };
@@ -53,7 +53,7 @@ export class InsightsService {
   }
 
   async listTransactions(q: Partial<Range> & {
-    categoryId?: number; accountId?: number; merchant?: string; text?: string; min?: number; max?: number;
+    categoryId?: number; accountId?: number; noAccount?: boolean; merchant?: string; text?: string; min?: number; max?: number;
     type?: string; status?: string; limit?: number; cursor?: number;
   }): Promise<{ items: TxView[]; nextCursor: number | null }> {
     const take = Math.min(q.limit ?? 50, 500);
@@ -65,6 +65,7 @@ export class InsightsService {
       merchant: q.merchant ? { contains: q.merchant, mode: 'insensitive' } : undefined,
       AND: [
         q.accountId ? { OR: [{ fromAccountId: q.accountId }, { toAccountId: q.accountId }] } : {},
+        q.noAccount ? MISSING_ACCOUNT_WHERE : {},
         q.categoryId ? { OR: [{ categoryId: q.categoryId }, { category: { parentId: q.categoryId } }] } : {},
         q.text ? { OR: (['merchant', 'note'] as const).map((f) => ({ [f]: { contains: q.text, mode: 'insensitive' } })) } : {},
       ],

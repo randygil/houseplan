@@ -30,7 +30,7 @@ export default function Movs({ preset }: { preset: TxQuery }) {
     const days = RANGES.find((r) => r[0] === f.range)?.[2]
     return {
       from: days ? iso(daysAgo(days - 1)) : undefined,
-      accountId: f.accountId ? +f.accountId : undefined, categoryId: f.categoryId ? +f.categoryId : undefined,
+      accountId: f.accountId && f.accountId !== 'none' ? +f.accountId : undefined, noAccount: f.accountId === 'none' ? 1 : undefined, categoryId: f.categoryId ? +f.categoryId : undefined,
       type: f.type || undefined, status: f.status || undefined, text: f.text || undefined,
       cursor: c ?? undefined, limit: 30,
     }
@@ -90,7 +90,7 @@ export default function Movs({ preset }: { preset: TxQuery }) {
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Buscar comercio, nota…" className={inputCls + ' !py-2'} type="search" />
         <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
           {sel('range', RANGES.map(([v, l]) => [v, l]))}
-          {sel('accountId', [['', 'Cuenta'], ...accounts.map((a) => [String(a.id), a.name] as [string, string])])}
+          {sel('accountId', [['', 'Cuenta'], ...accounts.map((a) => [String(a.id), a.name] as [string, string]), ['none', 'Sin cuenta']])}
           {sel('categoryId', [['', 'Categoría'], ...(cats ?? []).map((c) => [String(c.id), catLabel(c)] as [string, string])])}
           {sel('type', TYPES)}
           {sel('status', STATUSES)}

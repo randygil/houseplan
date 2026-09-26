@@ -119,7 +119,7 @@ export class ApiController {
   transactions(@Query() q: Record<string, string>) {
     return this.insights.listTransactions({
       from: date(q.from, 'from', false), to: date(q.to, 'to', false),
-      categoryId: num(q.categoryId, 'categoryId'), accountId: num(q.accountId, 'accountId'),
+      categoryId: num(q.categoryId, 'categoryId'), accountId: num(q.accountId, 'accountId'), noAccount: q.noAccount === '1' || q.noAccount === 'true',
       type: q.type || undefined, status: q.status || undefined, text: q.text || undefined, merchant: q.merchant || undefined,
       min: num(q.min, 'min'), max: num(q.max, 'max'),
       cursor: num(q.cursor, 'cursor'), limit: num(q.limit, 'limit'),

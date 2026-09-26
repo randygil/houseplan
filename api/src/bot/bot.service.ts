@@ -13,7 +13,7 @@ import { InsightsService } from '../insights/insights.service';
 import { CategoriesService } from '../ledger/categories.service';
 import { BagsService } from '../ledger/bags.service';
 import { DebtsService } from '../ledger/debts.service';
-import { LedgerService, missingAccount, TxInput, TxView } from '../ledger/ledger.service';
+import { LedgerService, MISSING_ACCOUNT_WHERE, missingAccount, TxInput, TxView } from '../ledger/ledger.service';
 import { currencyIn, monthKey, PlanService, sameMoney, type EntryView } from '../ledger/plan.service';
 import { amt, cb, dayLabel, debtsText, esc, hhmm, money, paidText, parseWhen, planDueText, planText, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
@@ -827,14 +827,8 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   }
 }
 
-/** Prisma filter twin of `missingAccount`: rows that may be confirmed. */
-const HAS_ACCOUNT = {
-  OR: [
-    { type: { in: ['expense', 'fee'] }, fromAccountId: { not: null } },
-    { type: 'income', toAccountId: { not: null } },
-    { type: 'transfer', OR: [{ fromAccountId: { not: null } }, { toAccountId: { not: null } }] },
-  ],
-};
+/** Rows that may be confirmed. */
+const HAS_ACCOUNT = { NOT: MISSING_ACCOUNT_WHERE };
 
 /** Agent/ask answer -> Telegram HTML; table (or chart as rows) as a monospace block. */
 function answerHtml(r: AskAnswer) {
