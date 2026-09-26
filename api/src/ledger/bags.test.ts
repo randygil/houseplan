@@ -106,3 +106,17 @@ test('cambio Bs -> cuenta USD (Zelle): priced by what landed, drains the bank\'s
   await ledger.void(t.id);
   assert.equal(Number((await db.bag.findUniqueOrThrow({ where: { id: bag.id } })).remainingVes), 2000);
 });
+
+test('void after a reconcile gives the money back (and undo takes it again)', async () => {
+  const bal = async () => (await ledger.balances()).find((x) => x.accountId === usd.id)!.balance;
+  const e = await ledger.create({ type: 'expense', occurredAt: new Date(), amount: 40, currency: 'USD', fromAccountId: usd.id, source: 'manual_text' });
+  await ledger.reconcile(usd.id, 100); // reading already includes the wrong expense
+  assert.equal(await bal(), 100);
+  await ledger.void(e.id);
+  assert.equal(await bal(), 140);
+  await ledger.undoLast(e.id);
+  assert.equal(await bal(), 100);
+  const late = await ledger.create({ type: 'expense', occurredAt: h(30), amount: 7, currency: 'USD', fromAccountId: usd.id, source: 'manual_text' });
+  await ledger.void(late.id); // backdated before the reconcile: never counted, voiding changes nothing
+  assert.equal(await bal(), 100);
+});

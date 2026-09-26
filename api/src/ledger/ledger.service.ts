@@ -164,6 +164,7 @@ export class LedgerService {
     const voidFlip = 'status' in patch && (patch.status === 'void') !== (prev.status === 'void');
     const moneyChanged = voidFlip || MONEY_KEYS.some((k) => k in patch && String(patch[k] ?? null) !== String(prev[k] ?? null));
     if (moneyChanged) {
+      await this.shiftBaselines(db, prev, { ...prev, ...pick(patch) });
       await this.bags.release(db, id);
       const merged = { ...prev, ...patch } as any;
       if (merged.status === 'void') data.bagId = null;
@@ -177,6 +178,24 @@ export class LedgerService {
     }
     const tx = await db.transaction.update({ where: { id }, data });
     return { prev, tx };
+  }
+
+  /**
+   * balanceOf only sums txs after an account's baseline (last reconcile, else opening). A tx that was already
+   * counted when that baseline was set is baked into it, so voiding/editing it moves the baseline instead.
+   */
+  private async shiftBaselines(db: Db, prev: Transaction, next: Transaction) {
+    const ids = [...new Set([prev.fromAccountId, prev.toAccountId, next.fromAccountId, next.toAccountId])].filter((x) => x != null);
+    for (const a of await db.account.findMany({ where: { id: { in: ids } } })) {
+      const since = a.lastReconciledAt ?? a.openingAt;
+      const effect = (t: Transaction) => t.status === 'void' || new Date(t.occurredAt) > since || prev.createdAt > since ? 0
+        : (t.toAccountId === a.id ? Number(t.toAmount ?? t.amount) : 0) - (t.fromAccountId === a.id ? Number(t.amount) : 0);
+      const d = effect(next) - effect(prev);
+      if (Math.abs(d) < 1e-9) continue;
+      await db.account.update({ where: { id: a.id }, data: a.lastReconciledAt
+        ? { lastReconciledBalance: Number(a.lastReconciledBalance ?? a.openingBalance) + d }
+        : { openingBalance: Number(a.openingBalance) + d } });
+    }
   }
 
   /** amountUsd / fxRate / fxSource / bagId (+ bag allocation for VES expense/fee). */
