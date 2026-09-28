@@ -207,6 +207,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         if (i % 3 === 2) k.row();
       });
       if (parent) k.row().text('⬅️ Categorías', cb('t', 'cts', tx.id));
+      else if (tx.status === 'pending' && hasAcc) k.row().text('🚫 Solo registro', cb('t', 'xo', tx.id));
       return back();
     }
     if (mode === 'edit')
@@ -216,8 +217,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         .text('🗑️ Anular', cb('t', 'no', tx.id)).text('↩️ Volver', cb('t', 'v', tx.id));
     if (tx.status === 'confirmed') return k.text('↩️ Deshacer', cb('t', 'un', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
     // no account = nothing to confirm yet: the first button picks it
-    return k.text(hasAcc ? '✅ Ok' : '🏦 Elegir cuenta', cb('t', hasAcc ? 'ok' : 'acs', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id)).row()
-      .text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).text('❌ Cancelar', cb('t', 'no', tx.id));
+    k.text(hasAcc ? '✅ Ok' : '🏦 Elegir cuenta', cb('t', hasAcc ? 'ok' : 'acs', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
+    if (hasAcc && !tx.excluded) k.text('🚫 Solo registro', cb('t', 'xo', tx.id));
+    return k.row().text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).text('❌ Cancelar', cb('t', 'no', tx.id));
   }
 
   private async onTxButton(act: string, id: number, arg: string | undefined, msgId?: number) {
@@ -242,6 +244,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         await this.ledger.update(id, { excluded: !tx.excluded });
         return this.showTx(id, { msgId, mode: 'edit' });
       }
+      case 'xo': // pending card: "solo registro" and done (moves the balance, never counts as spending)
+        await this.ledger.update(id, { excluded: true });
+        await this.ledger.confirm(id); await this.showTx(id, { msgId }); return this.afterConfirm(id);
       case 'un': {
         const tx = await this.ledger.undoLast(id);
         return tx ? this.showTx(id, { msgId }) : this.send('No hay nada que deshacer ahí 🙂');

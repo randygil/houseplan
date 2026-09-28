@@ -133,12 +133,15 @@ export class LedgerService {
     }));
   }
 
-  /** `at`: when `actual` was true (a bank statement row); txs after it stay on top of the new baseline. */
-  async reconcile(accountId: number, actual: number, at = new Date()): Promise<{ diff: number; tx: Transaction | null }> {
+  /**
+   * `at`: when `actual` was true (a bank statement row); txs after it stay on top of the new baseline.
+   * `lump`: book a missing amount as one "Diferencia" expense (false = just move the baseline).
+   */
+  async reconcile(accountId: number, actual: number, at = new Date(), lump = true): Promise<{ diff: number; tx: Transaction | null }> {
     const acct = await this.db.account.findUniqueOrThrow({ where: { id: accountId } });
     const diff = actual - (await this.balanceOf(acct, true, at));
     // Diff tx sits exactly at the reconcile instant, which balanceOf excludes (strictly after).
-    const tx = diff < -0.005
+    const tx = lump && diff < -0.005
       ? await this.create({ type: 'expense', occurredAt: at, amount: -diff, currency: acct.currency, fromAccountId: acct.id, source: 'reconcile', note: 'Diferencia de conciliación' })
       : null;
     await this.db.account.update({ where: { id: accountId }, data: { lastReconciledBalance: actual, lastReconciledAt: at } });

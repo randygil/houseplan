@@ -54,6 +54,11 @@ const ctx = await chromium.launchPersistentContext(join(HERE, 'profile'), {
   ],
 });
 const page = ctx.pages()[0] ?? (await ctx.newPage());
+// BDV's Angular service worker can get stuck serving 504s from a stale cache (seen 2026-09-28): drop it
+// every run, like "clear site data" but keeping cookies.
+await (await ctx.newCDPSession(page)).send('Storage.clearDataForOrigin', {
+  origin: 'https://bdvenlinea.banvenez.com', storageTypes: 'service_workers,cache_storage',
+});
 const shot = async (name) => DEBUG && page.screenshot({ path: join(DBG, `${name}.png`) }).catch(() => {});
 
 /** Visible movement rows of the open dialog, as text per column. */
@@ -67,7 +72,18 @@ let rows = [];
 let error = null;
 let logoutError = null;
 try {
-  await page.goto('https://bdvenlinea.banvenez.com/', { waitUntil: 'networkidle' });
+  // Not 'networkidle': Windscribe's DNS blocks the page's trackers, which is fine but noisy.
+  // BDV sometimes stalls serving its own assets. Nothing is typed yet, so reloading is safe (unlike the login itself).
+  for (let i = 1; ; i++) {
+    try {
+      await page.goto('https://bdvenlinea.banvenez.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await page.locator('input:visible').first().waitFor({ timeout: 30_000 });
+      break;
+    } catch (e) {
+      if (i === 3) throw new Error(`la página de BDV no cargó (3 intentos): ${String(e?.message ?? e).split('\n')[0]}`);
+      await page.waitForTimeout(rand(20_000, 40_000));
+    }
+  }
   await pause(1500, 3000);
   await shot('1-home');
 
@@ -84,7 +100,6 @@ try {
 
   await page.waitForURL(/posicionconsolidada/, { timeout: 30_000 });
   loggedIn = true;
-  await page.waitForLoadState('networkidle');
   await pause(2000, 4000);
   await shot('2-posicion');
 
@@ -112,13 +127,16 @@ try {
   await shot('error');
   if (DEBUG) writeFileSync(join(DBG, 'error.html'), await page.content().catch(() => ''));
   error = String(e?.message ?? e).split('\n')[0];
+  // Shown when a session is still open (ours left behind, or Randy logged in right now): wait, don't push.
+  if (/sesi[oó]n activa/i.test(await page.locator('body').innerText().catch(() => '')))
+    error = 'BDV dice que ya hay una sesión activa (¿estabas conectado tú, o quedó una abierta?)';
 } finally {
   if (loggedIn) {
     // Leave like a person: close the dialog, hit "Salir", confirm if asked.
     try {
-      const back = page.locator('mat-dialog-container').getByRole('button', { name: /regresar/i }).first();
+      const back = page.locator('mat-dialog-container button[mat-dialog-close]').first(); // "Regresar" (aria-label "Close dialog")
       if (await back.isVisible()) { await click(back); await pause(); }
-      await page.locator('mat-dialog-container').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
+      await page.locator('mat-dialog-container').waitFor({ state: 'detached', timeout: 10_000 });
       await click(page.locator('button[aria-label="Salir"]:visible').first());
       await pause(800, 1500);
       const yes = page.getByRole('button', { name: /^\s*(s[ií]|aceptar|confirmar)\s*$/i }).first();

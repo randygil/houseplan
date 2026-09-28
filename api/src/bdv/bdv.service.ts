@@ -10,6 +10,8 @@ import { match, parseRow, type RawRow, type Row } from './bdv.logic';
 const GRACE = 2 * 3_600_000;
 const DAY = 86_400_000;
 const MAX_CARDS = 5;
+/** Below this a movement isn't worth its own card: unmatched ones go into one "menores" line per direction. */
+const MIN_BS = 1000;
 
 /** The tray app on Randy's PC authenticates with `Authorization: Bearer $BDV_SYNC_TOKEN`. */
 @Injectable()
@@ -32,7 +34,8 @@ export class BdvService {
     await this.bot.send(`⚠️ BDV: no pude consultar (${esc(error.slice(0, 200))}).\nPausé las consultas automáticas: revisa y dale «Sincronizar ahora» en la bandeja.`);
   }
 
-  async sync(raw: RawRow[]) {
+  /** `from`: also (re)process rows up to that far back, even ones an earlier run skipped as history. */
+  async sync(raw: RawRow[], from?: Date) {
     if (!Array.isArray(raw) || !raw.length) throw new BadRequestException('rows required');
     const acct = await this.ledger.accountByCode('bdv');
     const since = acct.lastReconciledAt ?? acct.openingAt;
@@ -41,15 +44,19 @@ export class BdvService {
     const anchor = rows[0];
     if (!anchor) return { rows: 0 };
 
-    const seen = new Set((await this.db.rawEvent.findMany({ where: { source: 'bdv', externalId: { in: rows.map((r) => r.ref) } }, select: { externalId: true } })).map((e) => e.externalId));
+    const seen = new Set((await this.db.rawEvent.findMany({
+      where: { source: 'bdv', externalId: { in: rows.map((r) => r.ref) }, ...(from ? { NOT: { occurredAt: { gt: from }, payload: { path: ['skipped'], equals: true } } } : {}) },
+      select: { externalId: true },
+    })).map((e) => e.externalId));
     const fresh = rows.filter((r) => !seen.has(r.ref));
     // First run ever: everything already on the statement is history (baked into today's balance), just anchor.
-    const first = !(await this.db.rawEvent.count({ where: { source: 'bdv' } }));
-    const todo = first ? [] : fresh.filter((r) => r.at > since);
+    const first = !from && !(await this.db.rawEvent.count({ where: { source: 'bdv' } }));
+    const todo = first ? [] : fresh.filter((r) => r.at > (from ?? since));
 
     const cands = await this.candidates(acct.id, todo);
     const matched = match(todo, cands);
     const fees = todo.filter((r) => r.fee);
+    const small = todo.filter((r) => !r.fee && !matched.has(r.ref) && Math.abs(r.amount) < MIN_BS);
     const created: number[] = [];
 
     const feeTx = fees.length ? await this.ledger.create({
@@ -58,11 +65,23 @@ export class BdvService {
       note: `Comisiones BDV (${fees.length})`, source: 'bdv',
     }) : null;
 
-    for (const r of fresh) {
-      const txId = matched.get(r.ref) ?? (r.fee ? feeTx?.id : undefined);
-      const ev = await this.db.rawEvent.create({
-        data: { source: 'bdv', externalId: r.ref, occurredAt: r.at, processedAt: new Date(), payload: { ...r, at: r.at.toISOString(), txId, skipped: todo.includes(r) ? undefined : true } },
+    const smallTx = new Map<Row, number>();
+    for (const inflow of [false, true]) {
+      const g = small.filter((r) => r.amount > 0 === inflow);
+      if (!g.length) continue;
+      const tx = await this.ledger.create({
+        type: inflow ? 'income' : 'expense', occurredAt: g[0].at, amount: round(Math.abs(g.reduce((s, r) => s + r.amount, 0))), currency: 'VES',
+        ...(inflow ? { toAccountId: acct.id } : { fromAccountId: acct.id }), source: 'bdv',
+        note: `Movimientos menores de ${money(MIN_BS, 'VES')} (${g.length}): ${g.map((r) => r.desc.toLowerCase()).filter((d, i, a) => a.indexOf(d) === i).join(', ')}`.slice(0, 500),
       });
+      for (const r of g) smallTx.set(r, tx.id);
+      created.push(tx.id);
+    }
+
+    for (const r of fresh) {
+      const txId = matched.get(r.ref) ?? (r.fee ? feeTx?.id : smallTx.get(r));
+      const data = { source: 'bdv', externalId: r.ref, occurredAt: r.at, processedAt: new Date(), payload: { ...r, at: r.at.toISOString(), txId, skipped: todo.includes(r) ? undefined : true } };
+      const ev = await this.db.rawEvent.upsert({ where: { source_externalId: { source: 'bdv', externalId: r.ref } }, create: data, update: data });
       if (!todo.includes(r) || txId) continue;
       const tx = await this.ledger.create({
         type: r.amount < 0 ? 'expense' : 'income', occurredAt: r.at, amount: Math.abs(r.amount), currency: 'VES',
@@ -82,7 +101,8 @@ export class BdvService {
     const matchedIds = new Set(matched.values());
     const phantoms = cands.filter((c) => !matchedIds.has(c.id) && c.at > since && c.at <= anchor.at);
 
-    const rec = anchor.at > since ? await this.ledger.reconcile(acct.id, anchor.saldo, anchor.at) : null;
+    // No lump "diferencia" tx: every movement is its own line now; whatever is left over is only reported.
+    const rec = anchor.at > since ? await this.ledger.reconcile(acct.id, anchor.saldo, anchor.at, false) : null;
     await this.report({ anchor, todo, matched: matched.size, created, fees, rec, phantoms, first });
     return { rows: rows.length, fresh: fresh.length, matched: matched.size, created: created.length, fees: fees.length, diff: rec?.diff ?? null };
   }
@@ -109,7 +129,7 @@ export class BdvService {
 
   private async report(o: {
     anchor: Row; todo: Row[]; matched: number; created: number[]; fees: Row[];
-    rec: { diff: number; tx: { id: number } | null } | null; phantoms: { id: number; at: Date; amount: number }[]; first: boolean;
+    rec: { diff: number } | null; phantoms: { id: number; at: Date; amount: number }[]; first: boolean;
   }) {
     const hm = o.anchor.at.toLocaleString('es-VE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Caracas' });
     const lines = [`🏦 <b>BDV</b> al ${hm}: saldo ${money(o.anchor.saldo, 'VES')}`];
@@ -120,10 +140,10 @@ export class BdvService {
       const d = o.rec?.diff ?? 0;
       if (Math.abs(d) < 0.01) lines.push('✅ Cuadra.');
       else if (d > 0) lines.push(`👌 Había ${money(d, 'VES')} más de lo anotado; ajusté.`);
+      else lines.push(`⚠️ Faltan ${money(-d, 'VES')} que no explica ningún movimiento; ajusté el saldo.`);
       if (o.phantoms.length) lines.push(`❓ No aparecen en el banco: ${o.phantoms.map((p) => money(p.amount, 'VES')).join(', ')}. ¿Eran de otra cuenta?`);
     }
     await this.bot.send(lines.join('\n'), undefined, o.phantoms.map((p) => p.id));
-    if (o.rec?.tx) await this.bot.showTx(o.rec.tx.id, { mode: 'cat', prefix: `Faltan ${money(-o.rec.diff, 'VES')} en BDV que no explica ningún movimiento. ¿Qué fue?` });
     for (const id of o.created.slice(0, MAX_CARDS)) await this.bot.showTx(id, { prefix: 'Nuevo en BDV:' });
     if (o.created.length > MAX_CARDS) await this.bot.send(`…y ${o.created.length - MAX_CARDS} más pendientes en el panel.`);
   }
