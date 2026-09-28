@@ -4,7 +4,7 @@ import { BotService } from '../bot/bot.service';
 import { esc, money } from '../bot/ui';
 import { checkPassword } from '../http/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
-import { match, parseRow, type RawRow, type Row } from './bdv.logic';
+import { match, parseRow, unseen, type RawRow, type Row } from './bdv.logic';
 
 /** Rows younger than this wait for the next run: gives Randy time to log the expense himself first. */
 const GRACE = 2 * 3_600_000;
@@ -44,11 +44,10 @@ export class BdvService {
     const anchor = rows[0];
     if (!anchor) return { rows: 0 };
 
-    const seen = new Set((await this.db.rawEvent.findMany({
-      where: { source: 'bdv', externalId: { in: rows.map((r) => r.ref) }, ...(from ? { NOT: { occurredAt: { gt: from }, payload: { path: ['skipped'], equals: true } } } : {}) },
-      select: { externalId: true },
-    })).map((e) => e.externalId));
-    const fresh = rows.filter((r) => !seen.has(r.ref));
+    const events = await this.db.rawEvent.findMany({
+      where: { source: 'bdv', externalId: { in: rows.map((r) => r.ref) } }, select: { externalId: true, occurredAt: true, payload: true },
+    });
+    const fresh = unseen(rows, events, from);
     // First run ever: everything already on the statement is history (baked into today's balance), just anchor.
     const first = !from && !(await this.db.rawEvent.count({ where: { source: 'bdv' } }));
     const todo = first ? [] : fresh.filter((r) => r.at > (from ?? since));

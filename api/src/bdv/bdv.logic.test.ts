@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bdvDate, bs, match, parseRow } from './bdv.logic';
+import { bdvDate, bs, match, parseRow, unseen } from './bdv.logic';
 
 test('bs / bdvDate parse what the table shows', () => {
   assert.equal(bs('-56.637,00 Bs.'), -56637);
@@ -28,4 +28,14 @@ test('match: same amount + direction, closest in time, one-to-one, fees never ma
   assert.deepEqual([...m], [['a', 2], ['b', 1], ['d', 3]]);
   // outside ±2 days: no match
   assert.equal(match([row('x', -500, 10 + 72)], cands).size, 0);
+});
+
+test('unseen: skipped history comes back only with from, processed rows never do', () => {
+  const at = new Date('2026-09-28T14:37:00Z'), from = new Date('2026-09-28T04:00:00Z');
+  const row = (ref: string) => ({ ref, at, amount: -1, desc: '', saldo: 0, fee: false });
+  const rows = [row('skipped'), row('done'), row('new')];
+  const events = [{ externalId: 'skipped', occurredAt: at, payload: { skipped: true } }, { externalId: 'done', occurredAt: at, payload: { txId: 7 } }];
+  assert.deepEqual(unseen(rows, events).map((r) => r.ref), ['new']);
+  assert.deepEqual(unseen(rows, events, from).map((r) => r.ref), ['skipped', 'new']);
+  assert.deepEqual(unseen(rows, events, new Date('2026-09-29T00:00:00Z')).map((r) => r.ref), ['new']);
 });

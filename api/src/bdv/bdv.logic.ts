@@ -44,3 +44,14 @@ export function match(rows: Row[], cands: Candidate[]): Map<string, number> {
   }
   return out;
 }
+
+/**
+ * Rows no earlier run has handled. With `from`, rows an earlier run skipped as history (and that are
+ * newer than `from`) count as unhandled again; anything already processed never does (idempotent).
+ */
+export const unseen = (rows: Row[], events: { externalId: string; occurredAt: Date; payload: unknown }[], from?: Date) => {
+  const done = new Set(events
+    .filter((e) => !(from && e.occurredAt > from && (e.payload as { skipped?: boolean } | null)?.skipped === true))
+    .map((e) => e.externalId));
+  return rows.filter((r) => !done.has(r.ref));
+};
