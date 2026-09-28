@@ -27,6 +27,7 @@ services:
       TG_WEBHOOK_SECRET: ${TG_WEBHOOK_SECRET:?set TG_WEBHOOK_SECRET}
       TG_POLLING: ${TG_POLLING:-0}
       WEB_PASSWORD: ${WEB_PASSWORD:-}
+      BDV_SYNC_TOKEN: ${BDV_SYNC_TOKEN:-}   # bdv/sync.mjs on Randy's PC; empty = endpoint refuses everything
       OMNI_URL: ${OMNI_URL:-https://omniroute.randygil.com/v1/chat/completions}
       OMNI_KEY: ${OMNI_KEY:?set OMNI_KEY}
       OMNI_MODEL: ${OMNI_MODEL:-antigravity/gemini-2.5-flash}

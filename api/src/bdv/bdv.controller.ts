@@ -1,0 +1,14 @@
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { BdvService, BdvTokenGuard } from './bdv.service';
+
+/** Called by bdv/sync.mjs on Randy's PC: `{ rows }` after a read, `{ error }` when it gave up. */
+@Controller('bdv')
+@UseGuards(BdvTokenGuard)
+export class BdvController {
+  constructor(private bdv: BdvService) {}
+
+  @Post('sync') async sync(@Body() b: any) {
+    if (b?.error) { await this.bdv.failed(String(b.error)); return { ok: true }; }
+    return this.bdv.sync(b?.rows);
+  }
+}

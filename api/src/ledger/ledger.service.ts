@@ -133,10 +133,10 @@ export class LedgerService {
     }));
   }
 
-  async reconcile(accountId: number, actual: number): Promise<{ diff: number; tx: Transaction | null }> {
+  /** `at`: when `actual` was true (a bank statement row); txs after it stay on top of the new baseline. */
+  async reconcile(accountId: number, actual: number, at = new Date()): Promise<{ diff: number; tx: Transaction | null }> {
     const acct = await this.db.account.findUniqueOrThrow({ where: { id: accountId } });
-    const diff = actual - (await this.balanceOf(acct, true));
-    const at = new Date();
+    const diff = actual - (await this.balanceOf(acct, true, at));
     // Diff tx sits exactly at the reconcile instant, which balanceOf excludes (strictly after).
     const tx = diff < -0.005
       ? await this.create({ type: 'expense', occurredAt: at, amount: -diff, currency: acct.currency, fromAccountId: acct.id, source: 'reconcile', note: 'Diferencia de conciliación' })
@@ -167,7 +167,7 @@ export class LedgerService {
     return funding || spot ? { balance: usdt(funding) + usdt(spot), at: (funding ?? spot)!.takenAt } : null;
   }
 
-  private async balanceOf(a: Account, ledgerOnly = false): Promise<number> {
+  private async balanceOf(a: Account, ledgerOnly = false, until = new Date('9999-12-31')): Promise<number> {
     if (a.kind === 'synced' && !ledgerOnly) {
       const s = await this.syncedBalance(a);
       if (s) return s.balance;
@@ -179,7 +179,7 @@ export class LedgerService {
         coalesce(sum(coalesce("toAmount", amount)) FILTER (WHERE "toAccountId" = ${a.id}), 0) AS inc,
         coalesce(sum(amount) FILTER (WHERE "fromAccountId" = ${a.id}), 0) AS out
       FROM transactions
-      WHERE status <> 'void' AND "occurredAt" > ${since} AND (${a.id} IN ("toAccountId", "fromAccountId"))`;
+      WHERE status <> 'void' AND "occurredAt" > ${since} AND "occurredAt" <= ${until} AND (${a.id} IN ("toAccountId", "fromAccountId"))`;
     return base + Number(r.inc) - Number(r.out);
   }
 

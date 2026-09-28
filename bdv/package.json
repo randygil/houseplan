@@ -1,0 +1,8 @@
+{
+  "name": "plata-bdv",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "patchright": "^1.55.0"
+  }
+}
