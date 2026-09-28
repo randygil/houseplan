@@ -78,7 +78,7 @@ export class BdvService {
     }
 
     for (const r of fresh) {
-      const txId = matched.get(r.ref) ?? (r.fee ? feeTx?.id : smallTx.get(r));
+      const txId = matched.get(r.ref)?.id ?? (r.fee ? feeTx?.id : smallTx.get(r));
       const data = { source: 'bdv', externalId: r.ref, occurredAt: r.at, processedAt: new Date(), payload: { ...r, at: r.at.toISOString(), txId, skipped: todo.includes(r) ? undefined : true } };
       const ev = await this.db.rawEvent.upsert({ where: { source_externalId: { source: 'bdv', externalId: r.ref } }, create: data, update: data });
       if (!todo.includes(r) || txId) continue;
@@ -90,19 +90,24 @@ export class BdvService {
       created.push(tx.id);
     }
 
-    // A tx logged by hand after the bank posted it would land past the anchor and count twice: move it to the bank's time.
+    // The bank is the truth: a similar-amount link takes the bank's amount, and a tx logged by hand after the
+    // bank posted it (past the anchor, it would count twice) moves to the bank's time.
+    const adjusted: { from: number; to: number }[] = [];
     for (const r of todo) {
-      const id = matched.get(r.ref);
-      const c = cands.find((x) => x.id === id);
-      if (c && c.at > anchor.at) await this.ledger.update(c.id, { occurredAt: r.at }, 'bdv');
+      const l = matched.get(r.ref);
+      const c = l && cands.find((x) => x.id === l.id);
+      if (!c) continue;
+      const patch = { ...(l.fuzzy ? { amount: Math.abs(r.amount) } : {}), ...(c.at > anchor.at ? { occurredAt: r.at } : {}) };
+      if (Object.keys(patch).length) await this.ledger.update(c.id, patch, 'bdv');
+      if (l.fuzzy) adjusted.push({ from: c.amount, to: Math.abs(r.amount) });
     }
     // Logged by hand on BDV in this window but not on the statement: maybe the wrong account.
-    const matchedIds = new Set(matched.values());
+    const matchedIds = new Set([...matched.values()].map((l) => l.id));
     const phantoms = cands.filter((c) => !matchedIds.has(c.id) && c.at > since && c.at <= anchor.at);
 
     // No lump "diferencia" tx: every movement is its own line now; whatever is left over is only reported.
     const rec = anchor.at > since ? await this.ledger.reconcile(acct.id, anchor.saldo, anchor.at, false) : null;
-    await this.report({ anchor, todo, matched: matched.size, created, fees, rec, phantoms, first });
+    await this.report({ anchor, todo, matched: matched.size, adjusted, created, fees, rec, phantoms, first });
     return { rows: rows.length, fresh: fresh.length, matched: matched.size, created: created.length, fees: fees.length, diff: rec?.diff ?? null };
   }
 
@@ -122,12 +127,12 @@ export class BdvService {
     });
     return txs.map((t) => {
       const inflow = t.toAccountId === accountId;
-      return { id: t.id, at: t.occurredAt, inflow, amount: Number(inflow ? t.toAmount ?? t.amount : t.amount) };
+      return { id: t.id, at: t.occurredAt, inflow, amount: Number(inflow ? t.toAmount ?? t.amount : t.amount), exact: t.source === 'p2p' || t.toAmount != null };
     });
   }
 
   private async report(o: {
-    anchor: Row; todo: Row[]; matched: number; created: number[]; fees: Row[];
+    anchor: Row; todo: Row[]; matched: number; adjusted: { from: number; to: number }[]; created: number[]; fees: Row[];
     rec: { diff: number } | null; phantoms: { id: number; at: Date; amount: number }[]; first: boolean;
   }) {
     const hm = o.anchor.at.toLocaleString('es-VE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Caracas' });
@@ -140,6 +145,7 @@ export class BdvService {
       if (Math.abs(d) < 0.01) lines.push('✅ Cuadra.');
       else if (d > 0) lines.push(`👌 Había ${money(d, 'VES')} más de lo anotado; ajusté.`);
       else lines.push(`⚠️ Faltan ${money(-d, 'VES')} que no explica ningún movimiento; ajusté el saldo.`);
+      if (o.adjusted.length) lines.push(`🔗 Enlacé por monto parecido y dejé el del banco: ${o.adjusted.map((a) => `${money(a.from, 'VES')} → ${money(a.to, 'VES')}`).join(', ')}`);
       if (o.phantoms.length) lines.push(`❓ No aparecen en el banco: ${o.phantoms.map((p) => money(p.amount, 'VES')).join(', ')}. ¿Eran de otra cuenta?`);
     }
     await this.bot.send(lines.join('\n'), undefined, o.phantoms.map((p) => p.id));

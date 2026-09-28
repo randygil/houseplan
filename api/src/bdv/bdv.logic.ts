@@ -1,10 +1,16 @@
+import { caracasDay } from '../binance/binance.logic';
+
 /** A row of BDVenlínea's "Consulta de movimientos" table, exactly as the scraper read it. */
 export type RawRow = { fecha: string; referencia: string; descripcion: string; tipo: string; monto: string; saldo: string };
 export type Row = { at: Date; ref: string; desc: string; amount: number; saldo: number; fee: boolean };
 /** A ledger tx on the BDV account that a bank row could be. */
-export type Candidate = { id: number; at: Date; amount: number; inflow: boolean };
+/** `exact`: amount comes from an API (Binance P2P), so it never takes part in the "similar amount" pass. */
+export type Candidate = { id: number; at: Date; amount: number; inflow: boolean; exact?: boolean };
+export type Link = { id: number; fuzzy: boolean };
 
 const MATCH_WINDOW = 2 * 86_400_000;
+/** Second pass: same Caracas day, same direction, amount within this fraction (rounded or tipped by hand). */
+const FUZZY = 0.05;
 
 /** "1.234,56 Bs." / "-169,91 Bs." -> number */
 export const bs = (s: string) => {
@@ -28,20 +34,23 @@ export const parseRow = (r: RawRow): Row => {
 };
 
 /**
- * One-to-one: each bank row takes the closest-in-time unused ledger tx with the same amount and
- * direction within ±2 days. Returns ref -> tx id.
+ * One-to-one, two passes. Exact: same amount and direction within ±2 days, closest in time wins.
+ * Fuzzy (rows the exact pass left): a hand-logged tx the same day whose amount is within 5%, closest amount wins.
+ * Returns ref -> tx.
  */
-export function match(rows: Row[], cands: Candidate[]): Map<string, number> {
+export function match(rows: Row[], cands: Candidate[]): Map<string, Link> {
   const used = new Set<number>();
-  const out = new Map<string, number>();
-  for (const r of rows) {
-    if (r.fee) continue;
-    const best = cands
-      .filter((c) => !used.has(c.id) && c.inflow === r.amount > 0 && Math.abs(c.amount - Math.abs(r.amount)) < 0.01
-        && Math.abs(+c.at - +r.at) <= MATCH_WINDOW)
-      .sort((a, b) => Math.abs(+a.at - +r.at) - Math.abs(+b.at - +r.at))[0];
-    if (best) { used.add(best.id); out.set(r.ref, best.id); }
-  }
+  const out = new Map<string, Link>();
+  const pass = (fuzzy: boolean, ok: (r: Row, c: Candidate) => boolean, dist: (r: Row, c: Candidate) => number) => {
+    for (const r of rows) {
+      if (r.fee || out.has(r.ref)) continue;
+      const best = cands.filter((c) => !used.has(c.id) && c.inflow === r.amount > 0 && ok(r, c)).sort((a, b) => dist(r, a) - dist(r, b))[0];
+      if (best) { used.add(best.id); out.set(r.ref, { id: best.id, fuzzy }); }
+    }
+  };
+  pass(false, (r, c) => Math.abs(c.amount - Math.abs(r.amount)) < 0.01 && Math.abs(+c.at - +r.at) <= MATCH_WINDOW, (r, c) => Math.abs(+c.at - +r.at));
+  pass(true, (r, c) => !c.exact && +caracasDay(c.at) === +caracasDay(r.at) && Math.abs(c.amount - Math.abs(r.amount)) <= FUZZY * Math.abs(r.amount),
+    (r, c) => Math.abs(c.amount - Math.abs(r.amount)));
   return out;
 }
 

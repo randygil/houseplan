@@ -25,9 +25,22 @@ test('match: same amount + direction, closest in time, one-to-one, fees never ma
     { id: 4, at: at(12), amount: 14, inflow: false },
   ];
   const m = match([row('a', -500, 14), row('b', -500, 9), row('c', -500, 12), row('d', 90000, 13), row('e', -90000, 13), row('f', -14, 12, true)], cands);
-  assert.deepEqual([...m], [['a', 2], ['b', 1], ['d', 3]]);
+  assert.deepEqual([...m].map(([r, l]) => [r, l.id]), [['a', 2], ['b', 1], ['d', 3]]);
   // outside ±2 days: no match
   assert.equal(match([row('x', -500, 10 + 72)], cands).size, 0);
+});
+
+test('match: similar amount the same day links as fuzzy, closest amount wins, never API amounts', () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 8, 28, h)); // 28-09, 00:00-19:59 Caracas
+  const row = (ref: string, amount: number, h: number) => ({ ref, amount, at: at(h), desc: '', saldo: 0, fee: false });
+  const cands = [
+    { id: 1, at: at(20), amount: 16500, inflow: false },           // 16:00 Caracas, same day
+    { id: 2, at: at(20), amount: 16000, inflow: false },
+    { id: 3, at: at(20), amount: 90000, inflow: true, exact: true }, // P2P: exact only
+    { id: 4, at: at(28), amount: 5000, inflow: false },             // 29-09 Caracas: other day
+  ];
+  const m = match([row('a', -16547.76, 21), row('b', -16100, 21), row('c', 89000, 21), row('d', -5000, 23), row('e', -30000, 21)], cands);
+  assert.deepEqual([...m], [['d', { id: 4, fuzzy: false }], ['a', { id: 1, fuzzy: true }], ['b', { id: 2, fuzzy: true }]]);
 });
 
 test('unseen: skipped history comes back only with from, processed rows never do', () => {
