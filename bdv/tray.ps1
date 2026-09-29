@@ -1,6 +1,5 @@
-﻿# Tray icon that runs sync.mjs a few times a day, like a person checking the bank:
-# 3 runs at random times between 08:00 and 22:00, only when the PC has been idle for a few minutes
-# (the Chrome window is off-screen, but its taskbar button still flashes for ~1 min).
+﻿# Tray icon that runs sync.mjs like a person checking the bank: every ~3 h (±15 min) between 08:00 and 22:00,
+# preferably while the PC is idle (the Chrome window is off-screen, but its taskbar button shows for ~1 min).
 # Any failure pauses the schedule until "Sincronizar ahora" is clicked: never retry a bank login on our own.
 # Start: powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File tray.ps1
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -15,20 +14,17 @@ public static class Idle {
 
 $dir = $PSScriptRoot
 $log = Join-Path $dir 'sync.log'
-$runsPerDay = 3; $from = 8; $to = 22; $idleMin = 3
+$everyMin = 180; $from = 8; $to = 22; $idleMin = 3; $maxWaitMin = 45
 
-function Slots([datetime]$day) {
-  # One random time inside each equal share of the waking window, so runs don't bunch up.
-  $share = ($to - $from) * 60 / $runsPerDay
-  0..($runsPerDay - 1) | ForEach-Object { $day.Date.AddHours($from).AddMinutes($_ * $share + (Get-Random -Maximum ([int]$share - 20))) }
-}
-function NextSlot {
-  $now = Get-Date
-  $next = (Slots $now) + (Slots $now.AddDays(1)) | Where-Object { $_ -gt $now } | Select-Object -First 1
-  return $next
+function NextSlot([datetime]$after) {
+  $t = $after.AddMinutes($everyMin + (Get-Random -Minimum -15 -Maximum 16))
+  if ($t.Hour -lt $from) { $t = $t.Date.AddHours($from).AddMinutes((Get-Random -Maximum 30)) }
+  if ($t.Hour -ge $to) { $t = $t.Date.AddDays(1).AddHours($from).AddMinutes((Get-Random -Maximum 30)) }
+  return $t
 }
 
-$script:next = NextSlot
+# First run a few minutes after start (login / reboot), then every ~3 h.
+$script:next = NextSlot (Get-Date).AddMinutes(-$everyMin + 5)
 $script:paused = $false
 $script:proc = $null
 
@@ -71,11 +67,10 @@ $timer.add_Tick({
       $script:paused = $true
       $icon.ShowBalloonTip(10000, 'BDV', 'La consulta falló; pausé las automáticas. Detalle en sync.log', 'Warning')
     }
-    $script:next = NextSlot
+    $script:next = NextSlot (Get-Date)
   } elseif (-not $script:paused -and (Get-Date) -ge $script:next) {
-    $late = ((Get-Date) - $script:next).TotalHours
-    if ([Idle]::Minutes() -ge $idleMin) { Start-Sync }
-    elseif ($late -gt 3) { $script:next = NextSlot }  # never idle in this share of the day: skip it
+    # Wait for an idle moment, but not forever: after $maxWaitMin run anyway (the window stays off-screen).
+    if ([Idle]::Minutes() -ge $idleMin -or ((Get-Date) - $script:next).TotalMinutes -ge $maxWaitMin) { Start-Sync }
   }
   Refresh
 })

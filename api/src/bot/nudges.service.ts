@@ -159,7 +159,8 @@ export class NudgesService implements OnModuleInit {
         break;
       case 'reconcile': {
         const acc = p.refId ? await this.db.account.findUnique({ where: { id: p.refId } }) : null;
-        if (!acc) { await this.db.pendingPrompt.update({ where: { id: p.id }, data: { cancelledAt: now } }); return false; }
+        // BDV reconciles itself from the bank statement (bdv/ tray app): don't ask.
+        if (!acc || (acc.code === 'bdv' && process.env.BDV_SYNC_TOKEN)) { await this.db.pendingPrompt.update({ where: { id: p.id }, data: { cancelledAt: now } }); return false; }
         // Payload's expected is a snapshot from when the trade happened; ask about today's balance instead.
         pl.expected = (await this.ledger.balances()).find((b) => b.accountId === acc.id)?.balance ?? pl.expected;
         await this.db.pendingPrompt.update({ where: { id: p.id }, data: { payload: pl } });

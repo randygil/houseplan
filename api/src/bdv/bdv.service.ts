@@ -6,8 +6,6 @@ import { checkPassword } from '../http/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { match, parseRow, unseen, type RawRow, type Row } from './bdv.logic';
 
-/** Rows younger than this wait for the next run: gives Randy time to log the expense himself first. */
-const GRACE = 2 * 3_600_000;
 const DAY = 86_400_000;
 const MAX_CARDS = 5;
 /** Below this a movement isn't worth its own card: unmatched ones go into one "menores" line per direction. */
@@ -34,15 +32,22 @@ export class BdvService {
     await this.bot.send(`⚠️ BDV: no pude consultar (${esc(error.slice(0, 200))}).\nPausé las consultas automáticas: revisa y dale «Sincronizar ahora» en la bandeja.`);
   }
 
-  /** `from`: also (re)process rows up to that far back, even ones an earlier run skipped as history. */
+  /**
+   * Rows are handled from the newest bank row a run already processed (not from the account's last reconcile:
+   * a hand reconcile in the bot moves that, and must not make us skip bank rows). Rows before the reconcile
+   * baseline still become txs, they just don't move the balance. `from`: start further back instead.
+   */
   async sync(raw: RawRow[], from?: Date) {
     if (!Array.isArray(raw) || !raw.length) throw new BadRequestException('rows required');
     const acct = await this.ledger.accountByCode('bdv');
     const since = acct.lastReconciledAt ?? acct.openingAt;
-    // Table order is newest first; the first row old enough is the reconcile anchor (its saldo = balance right after it).
-    const rows = raw.map(parseRow).filter((r) => +r.at <= Date.now() - GRACE);
+    // Table order is newest first: the first row is the reconcile anchor (its saldo = balance right after it).
+    const rows = raw.map(parseRow);
     const anchor = rows[0];
-    if (!anchor) return { rows: 0 };
+    // coalesce: NOT over a missing JSON key is NULL, which would drop every processed row.
+    const [last] = await this.db.$queryRaw<{ at: Date | null }[]>`
+      SELECT max("occurredAt") AS at FROM raw_events WHERE source = 'bdv' AND coalesce(payload->>'skipped', '') <> 'true'`;
+    from ??= last?.at ?? undefined;
 
     const events = await this.db.rawEvent.findMany({
       where: { source: 'bdv', externalId: { in: rows.map((r) => r.ref) } }, select: { externalId: true, occurredAt: true, payload: true },
@@ -50,7 +55,7 @@ export class BdvService {
     const fresh = unseen(rows, events, from);
     // First run ever: everything already on the statement is history (baked into today's balance), just anchor.
     const first = !from && !(await this.db.rawEvent.count({ where: { source: 'bdv' } }));
-    const todo = first ? [] : fresh.filter((r) => r.at > (from ?? since));
+    const todo = first ? [] : fresh.filter((r) => r.at >= (from ?? since));
 
     const cands = await this.candidates(acct.id, todo);
     const matched = match(todo, cands);
