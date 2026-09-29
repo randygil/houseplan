@@ -23,8 +23,9 @@ function NextSlot([datetime]$after) {
   return $t
 }
 
-# First run a few minutes after start (login / reboot), then every ~3 h.
-$script:next = NextSlot (Get-Date).AddMinutes(-$everyMin + 5)
+# After a start (login / reboot): ~3 h after the last logged run, or in 5 min if that's already past.
+$lastRun = if (Test-Path $log) { (Get-Item $log).LastWriteTime } else { [datetime]::MinValue }
+$script:next = if ($lastRun -gt (Get-Date).AddMinutes(-$everyMin)) { NextSlot $lastRun } else { NextSlot (Get-Date).AddMinutes(-$everyMin + 5) }
 $script:paused = $false
 $script:proc = $null
 
