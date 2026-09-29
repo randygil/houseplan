@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bdvDate, bs, match, parseRow, unseen } from './bdv.logic';
+import { bankTwin, bdvDate, bs, match, parseRow, unseen } from './bdv.logic';
 
 test('bs / bdvDate parse what the table shows', () => {
   assert.equal(bs('-56.637,00 Bs.'), -56637);
@@ -51,4 +51,12 @@ test('unseen: skipped history comes back only with from, processed rows never do
   assert.deepEqual(unseen(rows, events).map((r) => r.ref), ['new']);
   assert.deepEqual(unseen(rows, events, from).map((r) => r.ref), ['skipped', 'new']);
   assert.deepEqual(unseen(rows, events, new Date('2026-09-29T00:00:00Z')).map((r) => r.ref), ['new']);
+});
+
+test('bankTwin: closest amount within 5% and ±36 h', () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 8, 29, h));
+  const bank = [{ id: 1, amount: 10712.57, at: at(15) }, { id: 2, amount: 10200, at: at(15) }, { id: 3, amount: 10700, at: at(15 + 48) }];
+  assert.equal(bankTwin(10700, at(16), bank)?.id, 1);
+  assert.equal(bankTwin(10250, at(16), bank)?.id, 2);
+  assert.equal(bankTwin(12000, at(16), bank), undefined);
 });

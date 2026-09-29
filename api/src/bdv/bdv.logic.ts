@@ -64,3 +64,12 @@ export const unseen = (rows: Row[], events: { externalId: string; occurredAt: Da
     .map((e) => e.externalId));
   return rows.filter((r) => !done.has(r.ref));
 };
+
+/**
+ * A movement Randy just logged by hand that the bank sync may already have brought in: a bank-made tx
+ * within ±36 h whose amount is within 5%. Closest amount wins, then closest time.
+ */
+export const bankTwin = <T extends { amount: number; at: Date }>(amount: number, at: Date, bank: T[]): T | undefined =>
+  bank
+    .filter((b) => Math.abs(+b.at - +at) <= 36 * 3_600_000 && Math.abs(b.amount - amount) <= FUZZY * b.amount)
+    .sort((a, b) => Math.abs(a.amount - amount) - Math.abs(b.amount - amount) || Math.abs(+a.at - +at) - Math.abs(+b.at - +at))[0];

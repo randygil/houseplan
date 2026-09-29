@@ -6,6 +6,8 @@ import { EmbeddingsService } from '../ai/embeddings.service';
 import { caracasIso, normAccount, normCurrency, normalizeIntent, Parsed, parseAmount, parseLocalDate } from '../ai/intent';
 import { IntentService } from '../ai/intent.service';
 import { TranscribeService } from '../ai/transcribe.service';
+import { bankTwin } from '../bdv/bdv.logic';
+import type { Transaction } from '../generated/prisma/client';
 import { BinanceService } from '../binance/binance.service';
 import { PrismaService } from '../db/prisma.service';
 import { AuthService } from '../http/auth.service';
@@ -247,6 +249,23 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       case 'xo': // pending card: "solo registro" and done (moves the balance, never counts as spending)
         await this.ledger.update(id, { excluded: true });
         await this.ledger.confirm(id); await this.showTx(id, { msgId }); return this.afterConfirm(id);
+      case 'dup': { // hand-logged `id` is the bank's `n`: keep the bank tx (real amount/time), give it what Randy said
+        const [mine, bank] = await Promise.all([this.ledger.get(id), this.ledger.get(n)]);
+        if (!mine || !bank || mine.status === 'void' || bank.status === 'void') return;
+        const keep = <T,>(v: T | null) => v ?? undefined;
+        await this.ledger.update(bank.id, {
+          categoryId: keep(mine.categoryId), merchant: keep(mine.merchant), note: keep(mine.note ?? bank.note), debtId: keep(mine.debtId),
+          planEntryId: keep(mine.planEntryId), ...(mine.excluded && { excluded: true }),
+        });
+        await this.ledger.void(mine.id);
+        if (msgId) await this.edit(msgId, '🔗 Listo, lo uní con el de BDV (quedó el monto del banco).');
+        const done = mine.categoryId != null || bank.type === 'income';
+        if (done) await this.ledger.confirm(bank.id);
+        await this.showTx(bank.id);
+        if (done) await this.afterConfirm(bank.id);
+        return;
+      }
+      case 'ndup': if (msgId) await this.edit(msgId, '👌 Ok, son distintos: quedan los dos.'); return;
       case 'un': {
         const tx = await this.ledger.undoLast(id);
         return tx ? this.showTx(id, { msgId }) : this.send('No hay nada que deshacer ahí 🙂');
@@ -411,10 +430,13 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         categoryId: it.categoryId ?? undefined, merchant: it.merchant ?? undefined, note: it.note ?? undefined,
         debtId: it.debtId ?? undefined, planEntryId: it.planEntryId ?? undefined, excluded: it.excluded, source, confidence: p.confidence,
       });
-      const auto = p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
+      const twin = await this.bankTwin(tx);
+      const auto = !twin && p.confidence > 0.9 && it.hasRule && it.accountId != null && (it.categoryId != null || type === 'income');
       if (auto) await this.ledger.confirm(tx.id);
       await this.showTx(tx.id);
       if (auto) await this.afterConfirm(tx.id);
+      if (twin) await this.send(`🔎 ¿Es el mismo que ya llegó de BDV: ${money(twin.amount, 'VES')} ${dayLabel(twin.at, new Date())} a las ${hhmm(twin.at)}?`,
+        new InlineKeyboard().text('🔗 Sí, es ese', cb('t', 'dup', tx.id, twin.id)).text('No, es otro', cb('t', 'ndup', tx.id)));
       const debt = it.debtId ? await this.debts.get(it.debtId) : null;
       const plan = it.planEntryId ? await this.plan.entry(it.planEntryId) : null;
       out.push({
@@ -424,6 +446,21 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       });
     }
     return out;
+  }
+
+  /** The bank-made (bdv sync) tx this hand-logged BDV movement probably duplicates, if any. */
+  private async bankTwin(tx: Transaction) {
+    const inflow = tx.type === 'income';
+    const bdv = await this.db.account.findUnique({ where: { code: 'bdv' } });
+    if (!bdv || tx.currency !== 'VES' || (inflow ? tx.toAccountId : tx.fromAccountId) !== bdv.id) return undefined;
+    const rows = await this.db.transaction.findMany({
+      where: {
+        source: 'bdv', status: { not: 'void' }, type: inflow ? 'income' : 'expense', [inflow ? 'toAccountId' : 'fromAccountId']: bdv.id,
+        NOT: { note: { startsWith: 'Movimientos menores' } }, // grouped small rows are never one hand-logged movement
+        occurredAt: { gte: new Date(+tx.occurredAt - 36 * 3_600_000), lte: new Date(+tx.occurredAt + 36 * 3_600_000) },
+      },
+    });
+    return bankTwin(Number(tx.amount), tx.occurredAt, rows.map((r) => ({ id: r.id, amount: Number(r.amount), at: r.occurredAt })));
   }
 
   /** Own-account move; different currencies = an exchange (amount out, toAmount in), priced by what landed. */
