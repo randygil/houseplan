@@ -20,7 +20,7 @@ import { currencyIn, monthKey, PlanService, sameMoney, type EntryView } from '..
 import { amt, cb, dayLabel, debtsText, esc, hhmm, money, paidText, parseWhen, planDueText, planText, startOfDay, startOfMonth, startOfWeek, txCard, usd } from './ui';
 
 type Field = 'amount' | 'merchant' | 'note' | 'date';
-export type Awaiting = { kind: Field | 'balance' | 'plan_amount'; txId?: number; accountId?: number; promptId?: number; entryId?: number; msgId?: number; at: number };
+export type Awaiting = { kind: Field | 'balance' | 'plan_amount' | 'what'; txId?: number; accountId?: number; promptId?: number; entryId?: number; msgId?: number; at: number };
 type Mode = 'view' | 'edit' | 'acc' | 'cat';
 
 const COMMANDS = [
@@ -209,7 +209,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         if (i % 3 === 2) k.row();
       });
       if (parent) k.row().text('⬅️ Categorías', cb('t', 'cts', tx.id));
-      else if (tx.status === 'pending' && hasAcc) k.row().text('🚫 Solo registro', cb('t', 'xo', tx.id));
+      else if (tx.status === 'pending' && hasAcc) k.row().text('✍️ ¿Para qué fue?', cb('t', 'what', tx.id)).text('🚫 Solo registro', cb('t', 'xo', tx.id));
       return back();
     }
     if (mode === 'edit')
@@ -220,6 +220,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (tx.status === 'confirmed') return k.text('↩️ Deshacer', cb('t', 'un', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
     // no account = nothing to confirm yet: the first button picks it
     k.text(hasAcc ? '✅ Ok' : '🏦 Elegir cuenta', cb('t', hasAcc ? 'ok' : 'acs', tx.id)).text('✏️ Editar', cb('t', 'ed', tx.id));
+    k.row().text('✍️ ¿Para qué fue?', cb('t', 'what', tx.id));
     if (hasAcc && !tx.excluded) k.text('🚫 Solo registro', cb('t', 'xo', tx.id));
     return k.row().text('🏦 Cuenta', cb('t', 'acs', tx.id)).text('🏷️ Categoría', cb('t', 'cts', tx.id)).text('❌ Cancelar', cb('t', 'no', tx.id));
   }
@@ -265,6 +266,9 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
         if (done) await this.afterConfirm(bank.id);
         return;
       }
+      case 'what':
+        this.awaiting = { kind: 'what', txId: id, msgId, at: Date.now() };
+        return this.send('✍️ Cuéntame para qué fue, como me lo dirías: «almuerzo con Ana», «la luz de septiembre», «le presté a Juan»…');
       case 'ndup': if (msgId) await this.edit(msgId, '👌 Ok, son distintos: quedan los dos.'); return;
       case 'un': {
         const tx = await this.ledger.undoLast(id);
@@ -336,6 +340,26 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (!r.ran.length) return this.send('Aquí estoy 🙂 Cuéntame un gasto o pregúntame algo.');
   }
 
+  /** "¿Para qué fue?" answer: the agent fills in that same tx (never a new one), then it's confirmed if complete. */
+  private async explainTx(id: number, what: string): Promise<boolean> {
+    const tx = await this.ledger.get(id);
+    if (!tx || tx.status === 'void') return false;
+    const where = tx.type === 'income' ? `entró a ${tx.toAccount?.name ?? '?'}` : `salió de ${tx.fromAccount?.name ?? '?'}`;
+    const r = await this.intent.agent(
+      `El movimiento #${tx.id} (${money(Number(tx.amount), tx.currency)}, ${where}${tx.note ? `, el banco dice «${tx.note}»` : ''}) fue: ${what}\n`
+      + `Complétalo con edit_transaction id=${tx.id} (comercio, categoría, nota, deuda o excluded, según lo que dije). No crees uno nuevo.`,
+      this.actions('manual_text'),
+    );
+    if (typeof r.reply === 'string' && r.reply.trim()) await this.send(answerHtml(shape(r)));
+    const after = await this.ledger.get(id);
+    if (after?.status === 'pending' && !missingAccount(after) && (after.categoryId || after.excluded || after.type === 'income')) {
+      await this.ledger.confirm(id);
+      await this.showTx(id);
+      await this.afterConfirm(id);
+    }
+    return true;
+  }
+
   /** The agent's action tools: thin wrappers over the same handlers the buttons/commands use. */
   private actions(source: string): Tools {
     const parse = async (raw: object) => normalizeIntent(raw, { now: new Date(), accounts: await this.ledger.balances() });
@@ -387,6 +411,7 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
   /** Consumes a typed answer to a button ("escribe el monto…"). false => not an answer, run the normal pipeline. */
   private async fill(a: Awaiting, text: string): Promise<boolean> {
     const t = text.trim();
+    if (a.kind === 'what') return this.explainTx(a.txId!, t);
     if (a.kind === 'balance') {
       const n = parseAmount(t);
       if (n == null) return false;
