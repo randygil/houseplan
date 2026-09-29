@@ -43,7 +43,7 @@ export class IntentService {
       turns: turns.reverse().slice(0, -1), recent: recent.map(txLine),
       debts: debts.filter((d) => d.remaining > 0).map((d) => `- #${d.id} ${d.name}: ${+d.remaining.toFixed(2)} de ${d.amount} ${d.currency}`),
       plan: plan.entries.map(planCtxLine),
-      pending: pending ? `${pending.kind} ${JSON.stringify(pending.payload)}` : null,
+      pending: pending ? `${pending.kind}${pending.refId && pending.kind !== 'reconcile' ? ` sobre la transacción #${pending.refId}` : ''} ${JSON.stringify(pending.payload)}` : null,
     }, TOOLS);
     const tools: Tools = { ...Object.fromEntries(READ_TOOLS.map((t) => [t, (a: any) => this.asker.tool(t, a)])), ...actions };
     return runAgent((m) => this.llm.json(m, AGENT_HINT, this.llm.smart, 2000),

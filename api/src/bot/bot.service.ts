@@ -340,6 +340,19 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
     if (!r.ran.length) return this.send('Aquí estoy 🙂 Cuéntame un gasto o pregúntame algo.');
   }
 
+  /** Editing the tx a sent prompt asks about answers it; a pending tx that's now complete gets confirmed. */
+  private async promptAnswered(id: number) {
+    const { count } = await this.db.pendingPrompt.updateMany({
+      where: { refId: id, kind: { not: 'reconcile' }, sentAt: { not: null }, answeredAt: null, cancelledAt: null }, data: { answeredAt: new Date() },
+    });
+    const tx = count ? await this.ledger.get(id) : null;
+    if (tx?.status === 'pending' && !missingAccount(tx) && (tx.categoryId || tx.excluded || tx.type !== 'expense')) {
+      await this.ledger.confirm(id);
+      await this.showTx(id);
+      await this.afterConfirm(id);
+    }
+  }
+
   /** "¿Para qué fue?" answer: the agent fills in that same tx (never a new one), then it's confirmed if complete. */
   private async explainTx(id: number, what: string): Promise<boolean> {
     const tx = await this.ledger.get(id);
@@ -368,7 +381,11 @@ export class BotService implements OnModuleInit, OnApplicationBootstrap, OnModul
       add_transactions: async (a) => this.addItems(await parse({ intent: 'add_expense', items: a.items, confidence: a.confidence }), source),
       add_transfer: (a) => this.addTransfer(a, source),
       add_debt: (a) => this.addDebt(a),
-      edit_transaction: async (a) => ok(this.editTx(await parse({ intent: 'edit', target_tx_id: a.id, patch: a }))),
+      edit_transaction: async (a) => {
+        await this.editTx(await parse({ intent: 'edit', target_tx_id: a.id, patch: a }));
+        await this.promptAnswered(Number(a.id));
+        return 'ok';
+      },
       void_transaction: (a) => ok(this.remove(Number(a.id) || null)),
       undo: (a) => ok(this.undo(Number(a.id) || null)),
       set_balance: async (a) => ok(this.setBalance((await parse({ balance: a })).balance, false)),
