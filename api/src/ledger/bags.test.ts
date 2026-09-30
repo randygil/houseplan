@@ -60,6 +60,8 @@ test('FIFO allocation, release on void/edit, undo', async () => {
 
   await ledger.void(a.id);
   assert.deepEqual(await remaining(), [[1000, false], [500, false]]);
+  await assert.rejects(ledger.update(a.id, { note: 'x' }), /anulado/); // void is dead: no edits, no confirm
+  await assert.rejects(ledger.confirm(a.id), /anulado/);
 
   await ledger.update(b.id, { amount: 200 }); // released then re-allocated FIFO from bag1
   assert.deepEqual(await remaining(), [[800, false], [1000, false]]);

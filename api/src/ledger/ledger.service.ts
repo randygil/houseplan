@@ -189,6 +189,8 @@ export class LedgerService {
   /** Snapshot prev → version, patch row, redo FX/bags if money fields changed. */
   private async apply(db: Db, id: number, patch: Patch, reason: string) {
     const prev = await db.transaction.findUniqueOrThrow({ where: { id } });
+    // A voided tx is dead: only /deshacer brings it back.
+    if (prev.status === 'void' && reason !== 'undo') throw new BadRequestException(`El movimiento #${id} está anulado; no se puede cambiar.`);
     // Only when this change confirms it or touches its accounts: old confirmed rows without one stay editable.
     const next = { ...prev, ...pick(patch) };
     if (next.status === 'confirmed' && ['status', 'type', 'fromAccountId', 'toAccountId'].some((k) => k in patch) && missingAccount(next))
@@ -196,6 +198,8 @@ export class LedgerService {
     await db.transactionVersion.create({ data: { transactionId: id, snapshot: toJson(prev), reason } });
     const data: Prisma.TransactionUncheckedUpdateInput = { ...pick(patch) };
     const voidFlip = 'status' in patch && (patch.status === 'void') !== (prev.status === 'void');
+    if (voidFlip && patch.status === 'void') // its open questions die with it
+      await db.pendingPrompt.updateMany({ where: { refId: id, kind: { not: 'reconcile' }, answeredAt: null, cancelledAt: null }, data: { cancelledAt: new Date() } });
     const moneyChanged = voidFlip || MONEY_KEYS.some((k) => k in patch && String(patch[k] ?? null) !== String(prev[k] ?? null));
     if (moneyChanged) {
       await this.shiftBaselines(db, prev, { ...prev, ...pick(patch) });
